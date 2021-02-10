@@ -4,16 +4,37 @@ from typing import Dict, List
 
 import ray
 import torch
+from torch import distributed
+from torch.utils import data
 
 from crowd_search import models
 from crowd_search import replay_buffer
 from crowd_search import shared_storage
 
 
-class Trainer:
-    def __init__(self, models_cfg: Dict, agent_nodes: List[int], device: torch.device):
+class Dataset(data.Dataset):
 
-        self.training_steps = 10000
+    def __init__(self):
+        self.transitions = []
+
+    def __len__(self):
+        return len(self.transitions)
+
+    def __getitem__(self, idx):
+        return self.transitions[idx]
+
+
+class Trainer:
+    def __init__(
+        self,
+        models_cfg: Dict,
+        device: torch.device,
+        process_group: distributed.ProcessGroupGloo,
+        num_explorers: int,
+    ):
+        self.process_group = process_group
+        self.num_explorers = num_explorers
+        self.epochs = 10
         self.device = device
         # Create models
         gnn_cfg = models_cfg.get("gnn")
@@ -50,26 +71,86 @@ class Trainer:
         self.l2 = torch.nn.MSELoss()
         self.l1 = torch.nn.L1Loss()
 
-    def continous_weight_update(
-        self, buffer: replay_buffer.ReplayBuffer, storage: shared_storage.SharedStorage,
-    ):
+        self.dataset = Dataset()
+        self.broadcast_models()
 
-        self._update_weights(storage)
-        # Wait until there is an episode complete.
-        while ray.get(storage.get_info.remote("num_played_games")) <= 1:
-            time.sleep(0.5)
+    def broadcast_models(self):
+        """Send the models out to the agent nodes."""
+        models = [self.gnn, self.value_estimator, self.state_estimator]
+        distributed.broadcast_object_list(
+            models, src=distributed.get_rank(), group=self.process_group
+        )
 
-        next_batch = buffer.get_batch.remote()
-        # Training loop
-        while 0 <= self.training_steps and not ray.get(
-            storage.get_info.remote("terminate")
-        ):
+    def _collate_explorations(self):
+        """Call out to the explorer nodes associated with this training agent and
+        request the training data."""
+        output = [None for _ in range(self.num_explorers + 1)]
+        distributed.gather_object(
+            [], output, dst=distributed.get_rank(), group=self.process_group
+        )
+        for node_update in output:
+            self.dataset.transitions.extend(node_update)
+        
+        for t in self.dataset.transitions:
+            print(type(t))
 
-            batch = ray.get(next_batch)
-            next_batch = buffer.get_batch.remote()
-            self.process_batch(batch)
-            if True:
-                self._update_weights(storage)
+
+    def continous_train(self) -> None:
+
+        for epoch in range(self.epochs):
+
+            # Update memory from explorer workers
+            self._collate_explorations()
+
+            loader = data.DataLoader(self.dataset, batch_size=20, pin_memory=True)
+
+            for batch in loader:
+                print(batch.shape)
+                (
+                    robot_states,
+                    human_states,
+                    rewards,
+                    next_robot_states,
+                    next_human_states,
+                ) = batch
+                robot_states = torch.stack(robot_states).squeeze(1)
+                human_states = torch.stack(human_states).squeeze(1)
+                rewards = torch.stack(rewards)
+                next_robot_states = torch.stack(next_robot_states).squeeze(1)
+                next_human_states = torch.stack(next_human_states).squeeze(1)
+
+                robot_states = robot_states.to(self.device)
+                human_states = human_states.to(self.device)
+                rewards = rewards.to(self.device)
+                next_robot_states = next_robot_states.to(self.device)
+                next_human_states = next_human_states.to(self.device)
+
+                robot_state, human_state = self.gnn(robot_states, human_states)
+                outputs = self.value_estimator(robot_state)
+
+                gamma_bar = pow(0.9, 0.25 * 1.0)
+
+                next_robot_states, next_human_state = self.gnn(
+                    next_robot_states.transpose(1, 2), next_human_states.transpose(1, 2)
+                )
+                next_value = self.value_estimator(next_robot_states)
+                target_values = rewards.unsqueeze(-1) + gamma_bar * next_value
+                value_loss = self.l1(outputs, target_values)
+
+                _, next_human_states_est = self.state_estimator(
+                    robot_states, human_state, None,
+                )
+                state_loss = self.l2(
+                    next_human_states_est.transpose(1, 2), next_human_states.squeeze(1)
+                )
+                total_loss = value_loss + state_loss
+
+                total_loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                print(f"Total loss")
+
+
 
     def process_batch(self, batch):
         (
