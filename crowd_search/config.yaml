@@ -1,0 +1,78 @@
+# Define the experiment's parameters.
+
+# These are params sent to the crowd_sim environment
+sim-environment:
+  # How long to give robot to reach goal. If reached, this constitutes a timeout.
+  time-limit: 30
+  # The time step used to update pos + vel * (dt)
+  time-step: &time-step 0.25
+
+  num-humans: 5
+
+# The various rewards and penalities for different behavors. The penalties are
+# based on social forces.
+incentives:
+  # Reaching goal is rewarded
+  success: 1.0
+  # Collision is penalized
+  collision: -0.25
+  # Keep the robot from coming to close to other agents.
+  discomfort-distance: 0.2
+  # TODO(alex): What is this?
+  discomfort-penalty-factor: 0.5
+
+# Define the parameters used to generate and control human agents.
+human:
+  # Use Optimal Reciprocal Collision Avoidance to model humans.
+  policy: "orca"
+  # Radius of circular region around human. Used to determine collisions.
+  radius: 0.3
+  # The velocity human wants to accelerate to reach.
+  preferred-velocity: 1.0
+
+# Define the parameters used to generate and control the robot.
+robot:
+  # TODO(alex): Policy name?
+  policy: None
+  # Radius of circular region around robot. Used to determine collisions.
+  radius: 0.3
+  # The velocity human wants to accelerate to reach.
+  preferred-velocity: 2.0
+
+# D-step planning used to predict value of potential states. These parameters
+# define the space to sample for values.
+d-step-planning:
+  # Define the kinematics equations used to update the position.
+  kinematics: "holonomic"
+  # The number of different speed samples to consider.
+  speed-samples: 5
+  # The number of rotation samples to consider.
+  rotation-samples: 16
+
+# Define the various models used during training.
+models:
+  # Social graph neural network.
+  gnn-output-depth: &output-dim 64
+  gnn: 
+    # The dimension of the robot's state. The 9 values are:
+    # [pos_x, pos_y, vel_x, vel_y, direction,
+    # target_x, target_y, radius, preferred-velocity]
+    robot-state-dimension: 9
+    # The dimension of a human's observable state. The 5 values are:
+    # pos_x, pos_y, vel_x, vel_y, direction.
+    human-state-dimension: 5
+    # The human and robot states are passed through a MLP to get equal output channels.
+    # The last dimension here is used as the node channel depth in the graph network.
+    mlp-layer-channels: [32, *output-dim]
+    # The number of layers in the graph model.
+    gnn-layers: 2
+  
+  state-net:
+    time-step: *time-step
+    channel-depth: *output-dim
+
+  value-net:
+    channel-depth: *output-dim
+    net-dims: [64, 64, 1]
+
+# TODO(alex): Add optimizer type
