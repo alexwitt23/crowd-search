@@ -3,6 +3,7 @@ from typing import List
 from torch import distributed
 from torch.distributed import rpc
 
+
 def broadcast_models(models: List[dict], process_group, src_node: int):
     """Common function for explorers and trainers to enter so that
     the latest trained weights can be broadcasted out to the explorers."""

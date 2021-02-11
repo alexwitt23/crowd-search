@@ -53,11 +53,13 @@ class Explorer:
         self.training_step = 10000
         self.target_policy = robot_policy
 
-    def run_episode(self, phase: str, agent_reference):
+    def run_episode(self, agent_reference):
+        print("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWww")
         """Run a single episode of the crowd search game.
         
         This function is passed a remote refference to an agent with
         an actual copy of the weights."""
+        phase = "train"
         assert phase in ["train", "val", "test"]
         self.running_episode = True
 
@@ -205,8 +207,7 @@ class Trainer:
         self.gnn.to(device=device)
         self.gnn.train()
         self.gnn = parallel.DistributedDataParallel(
-            self.gnn,
-            device_ids=[distributed.get_rank()],
+            self.gnn, device_ids=[distributed.get_rank()],
         )
 
         value_net_cfg = models_cfg.get("value-net")
@@ -216,8 +217,7 @@ class Trainer:
         self.value_estimator.to(self.device)
         self.value_estimator.train()
         self.value_estimator = parallel.DistributedDataParallel(
-            self.value_estimator,
-            device_ids=[distributed.get_rank()],
+            self.value_estimator, device_ids=[distributed.get_rank()],
         )
 
         state_net_cfg = models_cfg.get("state-net")
@@ -227,8 +227,7 @@ class Trainer:
         self.state_estimator.to(device)
         self.state_estimator.train()
         self.state_estimator = parallel.DistributedDataParallel(
-            self.state_estimator,
-            device_ids=[distributed.get_rank()],
+            self.state_estimator, device_ids=[distributed.get_rank()],
         )
 
         self.optimizer = torch.optim.AdamW(
@@ -254,13 +253,20 @@ class Trainer:
     def run_episode(self):
         futures = []
         for explorer_rref in self.explorer_references:
+            print(
+                explorer_rref.owner(),
+                Explorer.run_episode,
+                distributed_utils._call_method,
+                self.agent_rref,
+            )
             futures.append(
                 rpc.rpc_async(
                     explorer_rref.owner(),
-                    distributed_utils._call_method,
-                    args=(Explorer.run_episode, explorer_rref, self.agent_rref)
+                    Explorer.run_episode,
+                    args=(explorer_rref, self.agent_rref),
                 )
             )
+
         # wait until all obervers have finished this episode
         for future in futures:
             future.wait()

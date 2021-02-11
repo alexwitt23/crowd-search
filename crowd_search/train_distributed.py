@@ -5,7 +5,7 @@ import os
 import gym
 import torch
 from torch import distributed
-from torch.distributed import rpc 
+from torch.distributed import rpc
 from torch import multiprocessing
 import yaml
 
@@ -36,11 +36,7 @@ def _find_group(explorer_rank, learner_explorer_groups):
 
 
 def train(
-    local_rank: int,
-    cfg: dict,
-    num_learners: int,
-    num_explorers: int,
-    world_size: int
+    local_rank: int, cfg: dict, num_learners: int, num_explorers: int, world_size: int
 ) -> None:
 
     # Check if cuda is available and if this is an agent node which will be
@@ -62,15 +58,21 @@ def train(
     }
 
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions()
-    
+    rpc_backend_options.init_method = "tcp://localhost:29501"
+
     if not is_explorer:
         # Process group for DDP
-        distributed.init_process_group("gloo", rank=local_rank, world_size=num_learners)
+        distributed.init_process_group(
+            "nccl",
+            rank=local_rank,
+            world_size=num_learners,
+            init_method="tcp://localhost:29500",
+        )
         rpc.init_rpc(
             name=f"Trainer:{local_rank}",
             rank=local_rank,
             world_size=world_size,
-            rpc_backend_options=rpc_backend_options
+            rpc_backend_options=rpc_backend_options,
         )
         trainer_node = trainer.Trainer(
             models_cfg=cfg.get("models"),
@@ -85,7 +87,7 @@ def train(
             name=f"Explorer:{local_rank}",
             rank=local_rank,
             world_size=world_size,
-            rpc_backend_options=rpc_backend_options
+            rpc_backend_options=rpc_backend_options,
         )
         learner_node = _find_group(local_rank, learner_explorer_groups)
         environment = gym.make(
@@ -105,12 +107,8 @@ def train(
         sim_robot.set_policy(robot_policy)
         environment.configure(config.BaseEnvConfig())
         environment.set_robot(sim_robot)
-        e = explorer_distributed.Explorer(
-            environment,
-            sim_robot,
-            robot_policy,
-            gamma=0.9,
-            learner_idx=learner_node,
+        e = trainer.Explorer(
+            environment, sim_robot, robot_policy, gamma=0.9, learner_idx=learner_node,
         )
 
 
@@ -126,10 +124,7 @@ if __name__ == "__main__":
     # Read config
     train_cfg = yaml.safe_load(args.config_path.read_text())
 
-    os.environ["MASTER_ADDR"] = "127.0.0.1"
-    os.environ["MASTER_PORT"] = "12345"
-
-    world_size = _NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS
+    world_size = _NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS + 1
     multiprocessing.spawn(
         train,
         (train_cfg, _NUM_LEARNERS, _NUM_AGENTS, world_size),

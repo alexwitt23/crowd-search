@@ -40,11 +40,12 @@ class Explorer:
         self.training_step = 10000
         self.target_policy = robot_policy
 
-    def run_episode(self, phase: str, agent_reference):
+    def run_episode(self, agent_reference):
         """Run a single episode of the crowd search game.
         
         This function is passed a remote refference to an agent with
         an actual copy of the weights."""
+        phase = "train"
         assert phase in ["train", "val", "test"]
         self.running_episode = True
 
