@@ -5,6 +5,7 @@ import os
 import gym
 import torch
 from torch import distributed
+from torch.distributed import rpc 
 from torch import multiprocessing
 import yaml
 
@@ -34,7 +35,13 @@ def _find_group(explorer_rank, learner_explorer_groups):
             return learner_rank
 
 
-def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int,) -> None:
+def train(
+    local_rank: int,
+    cfg: dict,
+    num_learners: int,
+    num_explorers: int,
+    world_size: int
+) -> None:
 
     # Check if cuda is available and if this is an agent node which will be
     # learning.
@@ -45,36 +52,41 @@ def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int,) ->
         torch.cuda.set_device(local_rank)
         is_explorer = False
         device = torch.device(f"cuda:{local_rank}")
+    else:
+        torch.cuda.set_device(-1)
 
     is_main = local_rank == 0
-    # If we are using distributed training, initialize the backend through which process
-    # can communicate to each other.
-    if not (num_learners == num_explorers == 1):
-        torch.distributed.init_process_group(
-            "gloo",
-            world_size=num_learners * num_explorers + num_learners,
-            rank=local_rank,
-        )
     learner_explorer_groups = {
         learner_rank: _get_learner_explorers(learner_rank, _NUM_AGENTS, _NUM_LEARNERS)
         for learner_rank in range(num_learners)
     }
 
-    groups = {
-        learner_node: distributed.new_group([learner_node] + explorers, backend="gloo")
-        for learner_node, explorers in learner_explorer_groups.items()
-    }
-
+    rpc_backend_options = rpc.TensorPipeRpcBackendOptions()
+    
     if not is_explorer:
-
+        # Process group for DDP
+        distributed.init_process_group("gloo", rank=local_rank, world_size=num_learners)
+        rpc.init_rpc(
+            name=f"Trainer:{local_rank}",
+            rank=local_rank,
+            world_size=world_size,
+            rpc_backend_options=rpc_backend_options
+        )
         trainer_node = trainer.Trainer(
             models_cfg=cfg.get("models"),
             device=device,
-            process_group=groups[local_rank],
             num_explorers=num_explorers,
+            num_learners=num_learners,
+            explorer_nodes=learner_explorer_groups[local_rank],
         )
-        trainer_node.continous_train()
+        trainer_node.run_episode()
     else:
+        rpc.init_rpc(
+            name=f"Explorer:{local_rank}",
+            rank=local_rank,
+            world_size=world_size,
+            rpc_backend_options=rpc_backend_options
+        )
         learner_node = _find_group(local_rank, learner_explorer_groups)
         environment = gym.make(
             "CrowdSim-v0",
@@ -98,10 +110,8 @@ def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int,) ->
             sim_robot,
             robot_policy,
             gamma=0.9,
-            process_group=groups[learner_node],
             learner_idx=learner_node,
         )
-        e.continuous_play()
 
 
 if __name__ == "__main__":
@@ -119,9 +129,10 @@ if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = "12345"
 
+    world_size = _NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS
     multiprocessing.spawn(
         train,
-        (train_cfg, _NUM_LEARNERS, _NUM_AGENTS),
-        nprocs=_NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS,
+        (train_cfg, _NUM_LEARNERS, _NUM_AGENTS, world_size),
+        nprocs=world_size,
         join=True,
     )

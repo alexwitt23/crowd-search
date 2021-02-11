@@ -300,7 +300,7 @@ class CrowdSim(gym.Env):
             info = Nothing()
 
         else:
-            reward = 0.0
+            reward = 0.01
             done = False
             info = Nothing()
 

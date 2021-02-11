@@ -299,7 +299,7 @@ class CrowdSearchPolicy:
         elif furthur_away:
             reward = -0.01
         else:
-            reward = 0
+            reward = 0.01
 
         return reward
 
