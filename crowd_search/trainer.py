@@ -42,8 +42,8 @@ class Explorer:
         environment: crowd_sim.CrowdSim,
         robot: agent.Robot,
         robot_policy: policy.CrowdSearchPolicy,
-        gamma: float,
         learner_idx: int,
+        gamma: float=0.9,
     ) -> None:
         self.id = rpc.get_worker_info().id
         self.learner_idx = learner_idx
@@ -58,7 +58,6 @@ class Explorer:
         
         This function is passed a remote refference to an agent with
         an actual copy of the weights."""
-
         # Keep track of the various social aspects of the robot's navigation
         success = collision = timeout = discomfort = 0
         cumulative_rewards = []
@@ -69,8 +68,10 @@ class Explorer:
         timeout_cases = []
         timeout_times = []
 
+        print("WWWWWWwww")
         # Reset the environment at the beginning of each episode.
-        observation = self.environment.reset(phase)
+        observation = self.environment.reset("train")
+        print("WWWWWWwwwAAAAAAAAA")
 
         states, actions, rewards = [], [], []
 
@@ -183,6 +184,7 @@ class Trainer:
         num_explorers: int,
         num_learners: int,
         explorer_nodes: List[int],
+        cfg
     ):
         self.num_explorers = num_explorers
         self.explorer_nodes = explorer_nodes
@@ -238,10 +240,29 @@ class Trainer:
 
         self.explorer_references = []
         self.episode_history = {}
-
+        environment = gym.make(
+            "CrowdSim-v0",
+            env_cfg=cfg.get("sim-environment"),
+            incentive_cfg=cfg.get("incentives"),
+        )
+        robot_policy = policy.CrowdSearchPolicy(
+            cfg.get("models"),
+            cfg.get("robot"),
+            cfg.get("human"),
+            cfg.get("incentives"),
+            "cpu",
+        )
+        sim_robot = agent.Robot(config.BaseEnvConfig(), "robot")
+        sim_robot.time_step = environment.time_step
+        sim_robot.set_policy(robot_policy)
+        environment.configure(config.BaseEnvConfig())
+        environment.set_robot(sim_robot)
+        
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
-            self.explorer_references.append(rpc.remote(explorer_info, Explorer))
+            self.explorer_references.append(
+                rpc.remote(explorer_info, Explorer, args=(environment, sim_robot, robot_policy, distributed.get_rank()))
+            )
             self.episode_history[explorer_info.id] = []
 
     def run_episode(self):
@@ -249,12 +270,10 @@ class Trainer:
         for explorer_rref in self.explorer_references:
 
             futures.append(
-                explorer_rref.rpc_sync().run_episode(explorer_rref, self.agent_rref)
+                explorer_rref.rpc_async().run_episode(self.agent_rref)
             )
 
-        # wait until all obervers have finished this episode
-        for future in futures:
-            future.wait()
+            rets = torch.futures.wait_all(futures)
 
     def continous_train(self) -> None:
         # Send the same model out to all explorer nodes

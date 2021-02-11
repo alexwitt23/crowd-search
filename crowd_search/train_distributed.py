@@ -80,6 +80,7 @@ def train(
             num_explorers=num_explorers,
             num_learners=num_learners,
             explorer_nodes=learner_explorer_groups[local_rank],
+            cfg=cfg
         )
         trainer_node.run_episode()
     else:

@@ -29,8 +29,8 @@ class Explorer:
         environment: crowd_sim.CrowdSim,
         robot: agent.Robot,
         robot_policy: policy.CrowdSearchPolicy,
-        gamma: float,
         learner_idx: int,
+        gamma: float=0.9,
     ) -> None:
         self.id = rpc.get_worker_info().id
         self.learner_idx = learner_idx
