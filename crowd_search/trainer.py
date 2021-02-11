@@ -54,16 +54,10 @@ class Explorer:
         self.target_policy = robot_policy
 
     def run_episode(self, agent_reference):
-        print("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWww")
         """Run a single episode of the crowd search game.
         
         This function is passed a remote refference to an agent with
         an actual copy of the weights."""
-        phase = "train"
-        assert phase in ["train", "val", "test"]
-        self.running_episode = True
-
-        self.robot.policy.set_phase(phase)
 
         # Keep track of the various social aspects of the robot's navigation
         success = collision = timeout = discomfort = 0
@@ -253,18 +247,9 @@ class Trainer:
     def run_episode(self):
         futures = []
         for explorer_rref in self.explorer_references:
-            print(
-                explorer_rref.owner(),
-                Explorer.run_episode,
-                distributed_utils._call_method,
-                self.agent_rref,
-            )
+
             futures.append(
-                rpc.rpc_async(
-                    explorer_rref.owner(),
-                    Explorer.run_episode,
-                    args=(explorer_rref, self.agent_rref),
-                )
+                explorer_rref.rpc_sync().run_episode(explorer_rref, self.agent_rref)
             )
 
         # wait until all obervers have finished this episode

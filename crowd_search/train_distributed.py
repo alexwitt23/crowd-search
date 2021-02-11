@@ -111,6 +111,8 @@ def train(
             environment, sim_robot, robot_policy, gamma=0.9, learner_idx=learner_node,
         )
 
+    rpc.shutdown()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(__doc__)
@@ -124,7 +126,7 @@ if __name__ == "__main__":
     # Read config
     train_cfg = yaml.safe_load(args.config_path.read_text())
 
-    world_size = _NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS + 1
+    world_size = _NUM_LEARNERS * _NUM_AGENTS + _NUM_LEARNERS
     multiprocessing.spawn(
         train,
         (train_cfg, _NUM_LEARNERS, _NUM_AGENTS, world_size),
