@@ -7,7 +7,7 @@ sim-environment:
   # The time step used to update pos + vel * (dt)
   time-step: &time-step 0.25
 
-  num-humans: 5
+  num-humans: 10
 
 # The various rewards and penalities for different behavors. The penalties are
 # based on social forces.

@@ -2,18 +2,15 @@ import copy
 import time
 from typing import Dict, List
 
-import ray
 import torch
 from torch import distributed
 from torch.utils import data
 
 from crowd_search import models
-from crowd_search import replay_buffer
-from crowd_search import shared_storage
+from crowd_search import distributed_utils
 
 
 class Dataset(data.Dataset):
-
     def __init__(self):
         self.transitions = []
 
@@ -22,6 +19,38 @@ class Dataset(data.Dataset):
 
     def __getitem__(self, idx):
         return self.transitions[idx]
+
+
+def _collate_fn(data_batch):
+    robot_state = []
+    humans_state = []
+    value = []
+    reward = []
+    next_robot_state = []
+    next_humans_state = []
+    for data in data_batch:
+        robot_state.append(data["robot_state"])
+        humans_state.append(data["humans_state"])
+        value.append(data["value"])
+        reward.append(data["reward"])
+        next_robot_state.append(data["next_robot_state"])
+        next_humans_state.append(data["next_humans_state"])
+
+    robot_state = torch.stack(robot_state).squeeze(1)
+    humans_state = torch.stack(humans_state).squeeze(1)
+    value = torch.stack(value)
+    reward = torch.stack(reward)
+    next_robot_state = torch.stack(next_robot_state).squeeze(1).transpose(-2, -1)
+    next_humans_state = torch.stack(next_humans_state).squeeze(1).transpose(-2, -1)
+
+    return (
+        robot_state,
+        humans_state,
+        value,
+        reward,
+        next_robot_state,
+        next_humans_state,
+    )
 
 
 class Trainer:
@@ -72,52 +101,46 @@ class Trainer:
         self.l1 = torch.nn.L1Loss()
 
         self.dataset = Dataset()
-        self.broadcast_models()
 
-    def broadcast_models(self):
+    def _broadcast_models(self) -> None:
         """Send the models out to the agent nodes."""
         models = [self.gnn, self.value_estimator, self.state_estimator]
-        distributed.broadcast_object_list(
-            models, src=distributed.get_rank(), group=self.process_group
+        distributed_utils.broadcast_models(
+            models, self.process_group, distributed.get_rank()
         )
 
     def _collate_explorations(self):
         """Call out to the explorer nodes associated with this training agent and
         request the training data."""
         output = [None for _ in range(self.num_explorers + 1)]
-        distributed.gather_object(
-            [], output, dst=distributed.get_rank(), group=self.process_group
+        distributed_utils.collate_explorations(
+            [], output, self.process_group, distributed.get_rank()
         )
         for node_update in output:
             self.dataset.transitions.extend(node_update)
-        
-        for t in self.dataset.transitions:
-            print(type(t))
-
 
     def continous_train(self) -> None:
-
+        # Send the same model out to all explorer nodes
+        self._broadcast_models() 
+    
         for epoch in range(self.epochs):
 
             # Update memory from explorer workers
             self._collate_explorations()
 
-            loader = data.DataLoader(self.dataset, batch_size=20, pin_memory=True)
+            loader = data.DataLoader(
+                self.dataset, batch_size=20, pin_memory=True, collate_fn=_collate_fn,
+            )
 
             for batch in loader:
-                print(batch.shape)
                 (
                     robot_states,
                     human_states,
+                    values,
                     rewards,
                     next_robot_states,
                     next_human_states,
                 ) = batch
-                robot_states = torch.stack(robot_states).squeeze(1)
-                human_states = torch.stack(human_states).squeeze(1)
-                rewards = torch.stack(rewards)
-                next_robot_states = torch.stack(next_robot_states).squeeze(1)
-                next_human_states = torch.stack(next_human_states).squeeze(1)
 
                 robot_states = robot_states.to(self.device)
                 human_states = human_states.to(self.device)
@@ -131,7 +154,7 @@ class Trainer:
                 gamma_bar = pow(0.9, 0.25 * 1.0)
 
                 next_robot_states, next_human_state = self.gnn(
-                    next_robot_states.transpose(1, 2), next_human_states.transpose(1, 2)
+                    next_robot_states, next_human_states
                 )
                 next_value = self.value_estimator(next_robot_states)
                 target_values = rewards.unsqueeze(-1) + gamma_bar * next_value
@@ -140,17 +163,19 @@ class Trainer:
                 _, next_human_states_est = self.state_estimator(
                     robot_states, human_state, None,
                 )
+
                 state_loss = self.l2(
-                    next_human_states_est.transpose(1, 2), next_human_states.squeeze(1)
+                    next_human_states_est, next_human_states
                 )
                 total_loss = value_loss + state_loss
 
                 total_loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                print(f"Total loss")
+                print(f"total_loss={total_loss.item():.4f}")
 
-
+            # After epoch, send weights out to explorer nodes:
+            self._broadcast_models()
 
     def process_batch(self, batch):
         (
@@ -198,16 +223,3 @@ class Trainer:
         self.optimizer.step()
         self.optimizer.zero_grad()
         print(f"loss={total_loss.item():.5f}, rewards={torch.mean(rewards).item():.5f}")
-
-    def _update_weights(self, shared_storage_worker: shared_storage) -> None:
-        shared_storage_worker.set_info.remote(
-            {
-                "gnn_weights": copy.deepcopy(self.gnn.state_dict()),
-                "state_estimator_weights": copy.deepcopy(
-                    copy.deepcopy(self.state_estimator.state_dict()),
-                ),
-                "value_estimator_weights": copy.deepcopy(
-                    copy.deepcopy(self.value_estimator.state_dict()),
-                ),
-            }
-        )

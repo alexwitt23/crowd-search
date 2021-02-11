@@ -9,11 +9,13 @@ import gym
 import torch
 import tqdm
 from torch import distributed
+from torch import multiprocessing
 
 from crowd_search import replay_buffer
 from crowd_search import config
 from crowd_search import policy
 from crowd_search import shared_storage
+from crowd_search import distributed_utils
 from third_party.crowd_sim.envs import crowd_sim
 from third_party.crowd_sim.envs.utils import agent
 from third_party.crowd_sim.envs.utils import info
@@ -36,13 +38,12 @@ class Explorer:
         self.gamma = gamma
         self.training_step = 10000
         self.target_policy = robot_policy
-        self.get_model_update()
 
     def get_model_update(self):
         # TODO(alex): Make this a dictionary
         models = [None, None, None]
-        distributed.broadcast_object_list(
-            models, src=self.learner_idx, group=self.process_group
+        models = distributed_utils.broadcast_models(
+            models, self.process_group, self.learner_idx
         )
         [model.cpu() for model in models]
         self.target_policy.gnn = models[0]
@@ -51,14 +52,13 @@ class Explorer:
 
     def continuous_play(self) -> None:
         """Run episodes continuously."""
-
-        # Run episode
-        episode_history = self.run_episode(phase="train")
-
-        # Update the shared memory buffer
-        distributed.gather_object(
-            episode_history, dst=self.learner_idx, group=self.process_group
-        )
+        while True:
+            self.get_model_update()
+            # Run episode
+            episode_history = self.run_episode(phase="train")
+            distributed_utils.collate_explorations(
+                episode_history, None, self.process_group, self.learner_idx
+            )
 
     @torch.no_grad()
     def run_episode(self, phase: str):
@@ -174,14 +174,14 @@ class Explorer:
             reward = torch.Tensor([rewards[idx]])
 
             history.append(
-                (
-                    state[0],
-                    state[1],
-                    value,
-                    reward,
-                    next_state[0],
-                    next_state[1],
-                )
+                {
+                    "robot_state": state[0],
+                    "humans_state": state[1],
+                    "value": value,
+                    "reward": reward,
+                    "next_robot_state": next_state[0],
+                    "next_humans_state": next_state[1],
+                }
             )
 
         return history

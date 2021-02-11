@@ -34,7 +34,7 @@ def _find_group(explorer_rank, learner_explorer_groups):
             return learner_rank
 
 
-def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int) -> None:
+def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int,) -> None:
 
     # Check if cuda is available and if this is an agent node which will be
     # learning.
@@ -102,7 +102,6 @@ def train(local_rank: int, cfg: dict, num_learners: int, num_explorers: int) -> 
             learner_idx=learner_node,
         )
         e.continuous_play()
-
 
 
 if __name__ == "__main__":
