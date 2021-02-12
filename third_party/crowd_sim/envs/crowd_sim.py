@@ -3,6 +3,7 @@ import random
 import math
 from typing import Dict, Union
 
+import torch
 import gym
 import matplotlib.lines as mlines
 from matplotlib import patches
@@ -10,7 +11,6 @@ import numpy as np
 from numpy.linalg import norm
 
 from third_party.crowd_sim.envs.policy.policy_factory import policy_factory
-from third_party.crowd_sim.envs.utils.state import tensor_to_joint_state, JointState
 from third_party.crowd_sim.envs.utils import agent
 from third_party.crowd_sim.envs.utils import agent_actions
 from third_party.crowd_sim.envs.utils.info import *
@@ -180,13 +180,7 @@ class CrowdSim(gym.Env):
         self.global_time = 0
         # TODO(alex): Set different states?
         self.robot.set_state(
-            -self.circle_radius,
-            4 * random.uniform(-1, 1),
-            4 * random.uniform(-1, 1),
-            self.circle_radius,
-            0,
-            0,
-            np.pi / 2,
+            -self.circle_radius, 0, 0, self.circle_radius, 0, 0, np.pi / 2,
         )
 
         if phase in ["train", "val"]:
@@ -223,7 +217,7 @@ class CrowdSim(gym.Env):
         if hasattr(self.robot.policy, "trajs"):
             self.trajs = list()
 
-        ob = self.compute_observation_for(self.robot)
+        ob = self.collate_robot_observation()
 
         return ob
 
@@ -340,7 +334,7 @@ class CrowdSim(gym.Env):
 
             # compute the observation
             if self.robot.sensor == "coordinates":
-                ob = self.compute_observation_for(self.robot)
+                ob = self.collate_robot_observation()
             elif self.robot.sensor == "RGB":
                 raise NotImplementedError
         else:
@@ -369,11 +363,11 @@ class CrowdSim(gym.Env):
                 ob += [self.robot.get_observable_state()]
         return ob
 
-    def collate_robot_observation(self, robot: agent.Robot):
+    def collate_robot_observation(self):
         """The robot observation consists of the observable states of all other
         entities in the simulation."""
 
-        return [human.get_observable_state() for human in self.humans]
+        return torch.stack([human.get_observable_state() for human in self.humans])
 
     def collate_human_observation(self, human: agent.Human):
         """A human's observations are the robots and other humans if they are

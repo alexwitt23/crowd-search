@@ -61,13 +61,14 @@ def train(
         learner_rank: _get_learner_explorers(learner_rank, num_explorers, num_learners)
         for learner_rank in range(num_learners)
     }
-    rpc_backend_options = rpc.TensorPipeRpcBackendOptions(rpc_timeout=120)
-    rpc_backend_options.init_method = "tcp://localhost:29501"
+    rpc_backend_options = rpc.TensorPipeRpcBackendOptions(
+        num_worker_threads=1, init_method="tcp://localhost:29501"
+    )
 
     if not is_explorer:
         # Create process to distributed model training across trainer processes.
         distributed.init_process_group(
-            "nccl",
+            "gloo",
             rank=local_rank,
             world_size=num_learners,
             init_method="tcp://localhost:29500",

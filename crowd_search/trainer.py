@@ -121,7 +121,6 @@ class Trainer:
         self.l1 = nn.L1Loss()
 
         self.dataset = Dataset()
-
         self.explorer_references = []
 
         # Get remote references to the associated explorer nodes. Create each
@@ -156,7 +155,7 @@ class Trainer:
 
         # Send the explorers off to continuously explore.
         for explorer_rref in self.explorer_references:
-            explorer_rref.rpc_async().continuous_exploration()
+            explorer_rref.rpc_sync().continuous_exploration()
 
     def _broadcast_models(self) -> None:
         """Send the model weights to the explorer nodes."""
@@ -224,7 +223,6 @@ class Trainer:
                 clear_histories.append(explorer_rref.rpc_async().clear_history())
 
         torch.futures.wait_all(clear_histories)
-        distributed.barrier()
 
     def continous_train(self) -> None:
         """Target function to call after intialization.

@@ -74,7 +74,7 @@ class Agent:
             self.v_pref = v_pref
 
     def get_observable_state(self):
-        return ObservableState(self.px, self.py, self.vx, self.vy, self.radius)
+        return torch.Tensor([self.px, self.py, self.vx, self.vy, self.radius])
 
     def get_next_observable_state(self, action):
         self.check_validity(action)
@@ -89,16 +89,18 @@ class Agent:
         return ObservableState(next_px, next_py, next_vx, next_vy, self.radius)
 
     def get_full_state(self):
-        return state.FullState(
-            self.px,
-            self.py,
-            self.vx,
-            self.vy,
-            self.radius,
-            self.gx,
-            self.gy,
-            self.v_pref,
-            self.theta,
+        return torch.Tensor(
+            [
+                self.px,
+                self.py,
+                self.vx,
+                self.vy,
+                self.radius,
+                self.gx,
+                self.gy,
+                self.v_pref,
+                self.theta,
+            ]
         )
 
     def get_position(self):
@@ -189,12 +191,18 @@ class Robot(Agent):
     def __init__(self, config, section):
         super().__init__(config, section)
 
-    def act(self, human_states: List[state.ObservableState]):
-        """Given the observable human states, act."""
+    def act(self, human_states: torch.Tensor) -> torch.Tensor:
+        """Given the observable human states, act.
+        
+        Args:
+            human_states: A tensor of the human states in size Num_human, 5.
+                5 for dimension of human state.
+        """
         if self.policy is None:
             raise AttributeError("Policy attribute has to be set!")
-
-        state = JointState(self.get_full_state(), human_states)
-        action = self.policy.predict(state)
+        # Get the robot's state.
+        robot_state = self.get_full_state().unsqueeze(0)
+        print(robot_state.shape, human_states.shape)
+        action = self.policy.predict(robot_state, human_states)
 
         return action

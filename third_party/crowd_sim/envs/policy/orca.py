@@ -168,12 +168,13 @@ class CentralizedORCA(ORCA):
                 self.time_step, *params, self.radius, self.max_speed
             )
             for agent_state in state:
+                print(agent_state)
                 self.sim.addAgent(
-                    agent_state.position,
+                    (agent_state[0], agent_state[1]),
                     *params,
-                    agent_state.radius + 0.01 + self.safety_space,
+                    agent_state[4] + 0.01 + self.safety_space,
                     self.max_speed,
-                    agent_state.velocity
+                    (agent_state[2], agent_state[3]),
                 )
         else:
             for i, agent_state in enumerate(state):

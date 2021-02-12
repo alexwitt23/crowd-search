@@ -39,6 +39,7 @@ class Explorer:
         self.target_policy = copy.deepcopy(robot_policy)
         self.history = []
         self.lock = threading.Lock()
+        self.future_history = torch.futures.Future()
 
     @torch.no_grad()
     def continuous_exploration(self):
@@ -46,11 +47,13 @@ class Explorer:
         the results. This function is called by a trainer node."""
 
         while True:
-            with self.lock:
-                # Returns list of history tensors. This is done in two steps to prevent
-                # any locking issues. (Might be unnecessary, but not harmful).
-                history = self.run_episode()
-                self.history += history
+            # with self.lock:
+            # Returns list of history tensors. This is done in two steps to prevent
+            # any locking issues. (Might be unnecessary, but not harmful).
+            history = self.run_episode()
+            history = torch.futures.wait_all(history)
+
+            # self.history += history
 
             time.sleep(1.0)
 
@@ -70,6 +73,7 @@ class Explorer:
         with self.lock:
             self.history.clear()
 
+    @torch.no_grad()
     def run_episode(self):
         """Run a single episode of the crowd search game.
         
@@ -97,14 +101,15 @@ class Explorer:
         observation = self.environment.reset(phase)
 
         states, actions, rewards = [], [], []
-
+        fut = self.future_history
         goal_reached = False
         while not goal_reached:
             action = self.robot.act(observation)
+
             observation, reward, goal_reached, socal_info = self.environment.step(
                 action
             )
-            states.append(self.robot.policy.last_state)
+            states.append(self.environment.robot.policy.last_state)
             actions.append(action)
             rewards.append(reward)
             print(reward)
