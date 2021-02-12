@@ -1,79 +1,79 @@
-"""An explorer class that navigates the gym environment defined in 
-`third_party.crowd_sim`."""
+"""Explorer objects which maintain a copy of the environment and policy weights.
+The weights are updated periodically based on the schedule of trainer nodes.
+Every so ofte, the trainer nodes will ask for the explorers most recent episode
+history to queue for training."""
 
 import copy
-import time
-from typing import List
+import threading
+from typing import Dict, List
 
-import gym
-import ray
 import torch
-import tqdm
+from torch.distributed import rpc
 
-from crowd_search import replay_buffer
-from crowd_search import config
 from crowd_search import policy
-from crowd_search import shared_storage
 from third_party.crowd_sim.envs import crowd_sim
 from third_party.crowd_sim.envs.utils import agent
 from third_party.crowd_sim.envs.utils import info
 
 
-@ray.remote
 class Explorer:
     def __init__(
         self,
         environment: crowd_sim.CrowdSim,
         robot: agent.Robot,
         robot_policy: policy.CrowdSearchPolicy,
-        gamma: float = 0.9,
     ) -> None:
+        """Initialize Explorer.
+
+        Args:
+            environment: The simulation environment to be explored.
+            robot: The robot agent to use to explore the environment.
+            robot_policy: The policy that governs the robot's decisions.
+            learner_idx: The numerical id of the associated trainer node.
+        """
+        self.id = rpc.get_worker_info().id
+        # Copy to make entirly sure these are owned by the explorer process.
         self.environment = environment
-        self.robot = copy.deepcopy(robot)
-        self.gamma = gamma
-        self.training_step = 10000
+        self.robot = robot
         self.target_policy = robot_policy
+        self.history = []
+        self.lock = threading.Lock()
 
-    def continuous_play(
-        self, buffer: replay_buffer.ReplayBuffer, storage: shared_storage.SharedStorage,
-    ) -> None:
-        """Run episodes continuously."""
+    def continuous_exploration(self):
+        """Have this explorer continiously explore the environment and collect
+        the results. This function is called by a trainer node."""
 
-        # Wait for initial models to be copied to shared storage.
-        while (
-            ray.get(storage.get_info.remote("gnn_weights")) is None
-            or ray.get(storage.get_info.remote("value_estimator_weights")) is None
-            or ray.get(storage.get_info.remote("state_estimator_weights")) is None
-        ):
-            time.sleep(1.0)
+        while True:
+            # Returns list of history tensors. This is done in two steps to prevent
+            # any locking issues. (Might be unnecessary, but not harmful).
+            history = self.run_episode()
+            self.history += history
 
-        print("Loaded initial weights")
+    def get_history_len(self):
+        """Helper function to return length of the history currently held."""
+        return len(self.history)
 
-        while ray.get(
-            storage.get_info.remote("training_step")
-        ) < self.training_step and not ray.get(storage.get_info.remote("terminate")):
-            # TODO(alex): set new model weights
-            self.robot.policy.gnn.load_state_dict(
-                ray.get(storage.get_info.remote("gnn_weights"))
-            )
-            self.robot.policy.value_estimator.load_state_dict(
-                ray.get(storage.get_info.remote("value_estimator_weights"))
-            )
-            self.robot.policy.state_estimator.load_state_dict(
-                ray.get(storage.get_info.remote("state_estimator_weights"))
-            )
-            # Run episode
-            episode_history = self.run_episode(phase="train")
+    def get_history(self):
+        """Return the history. This function will bee called by trainer nodes."""
+        return self.history
 
-            # Update the shared memory buffer
-            buffer.save_game.remote(episode_history, storage)
+    def clear_history(self):
+        """Clear the history. Typically called by trainer node after new history has
+        been recieved."""
+        self.history.clear()
 
     @torch.no_grad()
-    def run_episode(self, phase: str):
-        """Run a single episode of the crowd search game."""
+    def run_episode(self):
+        """Run a single episode of the crowd search game.
+        
+        This function is passed a remote refference to an agent with
+        an actual copy of the weights."""
+        phase = "train"
         assert phase in ["train", "val", "test"]
+        self.running_episode = True
 
         self.robot.policy.set_phase(phase)
+        self.environment.set_robot(self.robot)
 
         # Keep track of the various social aspects of the robot's navigation
         success = collision = timeout = discomfort = 0
@@ -92,15 +92,15 @@ class Explorer:
 
         goal_reached = False
         while not goal_reached:
-
-            action = self.environment.robot.act(observation)
+            action = self.robot.act(observation)
             observation, reward, goal_reached, socal_info = self.environment.step(
                 action
             )
-            states.append(self.environment.robot.policy.last_state)
+            states.append(self.robot.policy.last_state)
             actions.append(action)
             rewards.append(reward)
-
+            print(reward)
+        
             # Check if robot exhibited discomforting behavior.
             if isinstance(socal_info, info.Discomfort):
                 discomfort += 1
@@ -114,55 +114,10 @@ class Explorer:
         elif isinstance(socal_info, info.Timeout):
             timeout += 1
             timeout_times.append(self.environment.time_limit)
-        """
-        # Update the replay memory if the run with sucessful or not sucessful
-        self._update_memory(states, actions, rewards)
         
-        cumulative_rewards.append(
-            sum(
-                [
-                    pow(self.gamma, t * self.robot.time_step * self.robot.v_pref)
-                    * reward
-                    for t, reward in enumerate(rewards)
-                ]
-            )
-        )
-        returns = []
-        for step in range(len(rewards)):
-            step_return = sum(
-                [
-                    pow(self.gamma, t * self.robot.time_step * self.robot.v_pref)
-                    * reward
-                    for t, reward in enumerate(rewards[step:])
-                ]
-            )
-            returns.append(step_return)
-        average_returns.append(sum(returns) / len(returns))
-
-        success_rate = success / num_episodes
-        collision_rate = collision / num_episodes
-        timeout_rate = timeout / num_episodes
-        assert success + collision + timeout == num_episodes
-        avg_nav_time = (
-            sum(success_times) / len(success_times)
-            if success_times
-            else self.environment.time_limit
-        )
-        """
-        return self._process_epoch(states, actions, rewards)
-        """
-        print(
-            {
-                "success_rate": success_rate,
-                "discomfort_rate": discomfort / num_episodes,
-                "collision_rate": collision_rate,
-                "timeout_rate": timeout_rate,
-                "avg_name_time": avg_nav_time,
-                "cumulative_rewards": sum(cumulative_rewards) / len(cumulative_rewards),
-                "average_returns": sum(average_returns) / len(average_returns),
-            }
-        )
-        """
+        history = self._process_epoch(states, actions, rewards)
+        print("DONE")
+        return history
 
     def _process_epoch(self, states: List, actions: List, rewards: List) -> None:
         """Extract the transition states from the episode."""
@@ -182,14 +137,21 @@ class Explorer:
             reward = torch.Tensor([rewards[idx]])
 
             history.append(
-                (
-                    state[0].cpu(),
-                    state[1].cpu(),
-                    value.cpu(),
-                    reward.cpu(),
-                    next_state[0].cpu(),
-                    next_state[1].cpu(),
-                )
+                {
+                    "robot_state": state[0],
+                    "humans_state": state[1],
+                    "value": value,
+                    "reward": reward,
+                    "next_robot_state": next_state[0],
+                    "next_humans_state": next_state[1],
+                }
             )
 
         return history
+
+    def update_models(self, models: Dict[str, torch.Tensor]) -> None:
+        """Pass in a dictionary of model_state_dicts that will be used to
+        update this Explorer's local copies."""
+        self.robot.policy.gnn.load_state_dict(models["gnn"])
+        self.robot.policy.value_estimator.load_state_dict(models["value_estimator"])
+        self.robot.policy.state_estimator.load_state_dict(models["state_estimator"])

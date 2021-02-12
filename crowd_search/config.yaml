@@ -1,4 +1,17 @@
 # Define the experiment's parameters.
+training:
+  # The number of learning nodes should be <= the GPU count unless you're
+  # doing all CPU training.
+  num-learners: 2
+  # The number separate processes for exploring the environment _per learner node_.
+  num-explorers: 6
+  # The batch size on one training node (a.k.a the same for all trainers)
+  batch-size: 20
+  # How many pieces of training data a trainer node should wait to get from the
+  # explorer nodes. The training node will wait until the explorers return this
+  # amount of data.
+  new-explorer-amount: 200
+
 
 # These are params sent to the crowd_sim environment
 sim-environment:
@@ -6,7 +19,7 @@ sim-environment:
   time-limit: 30
   # The time step used to update pos + vel * (dt)
   time-step: &time-step 0.25
-
+  # The number of humans in the simulation TODO(alex): What about a random amount?
   num-humans: 10
 
 # The various rewards and penalities for different behavors. The penalties are

@@ -10,14 +10,9 @@ from torch.distributed import rpc
 from torch.utils import data
 from torch.nn import parallel
 
-from crowd_search import explorer
 from crowd_search import models
 from crowd_search import distributed_utils
 
-import asyncio
-import copy
-import time
-from typing import List
 
 import gym
 import torch
@@ -26,119 +21,20 @@ from torch import distributed
 from torch.distributed import rpc
 from torch import multiprocessing
 
-from crowd_search import replay_buffer
+from crowd_search import explorer
 from crowd_search import config
 from crowd_search import policy
-from crowd_search import shared_storage
 from crowd_search import distributed_utils
-from third_party.crowd_sim.envs import crowd_sim
 from third_party.crowd_sim.envs.utils import agent
-from third_party.crowd_sim.envs.utils import info
-
-
-class Explorer:
-    def __init__(
-        self,
-        environment: crowd_sim.CrowdSim,
-        robot: agent.Robot,
-        robot_policy: policy.CrowdSearchPolicy,
-        learner_idx: int,
-        gamma: float=0.9,
-    ) -> None:
-        self.id = rpc.get_worker_info().id
-        self.learner_idx = learner_idx
-        self.environment = copy.deepcopy(environment)
-        self.robot = copy.deepcopy(robot)
-        self.gamma = gamma
-        self.training_step = 10000
-        self.target_policy = robot_policy
-
-    def run_episode(self, agent_reference):
-        """Run a single episode of the crowd search game.
-        
-        This function is passed a remote refference to an agent with
-        an actual copy of the weights."""
-        # Keep track of the various social aspects of the robot's navigation
-        success = collision = timeout = discomfort = 0
-        cumulative_rewards = []
-        average_returns = []
-        success_times = []
-        collision_cases = []
-        collision_times = []
-        timeout_cases = []
-        timeout_times = []
-
-        print("WWWWWWwww")
-        # Reset the environment at the beginning of each episode.
-        observation = self.environment.reset("train")
-        print("WWWWWWwwwAAAAAAAAA")
-
-        states, actions, rewards = [], [], []
-
-        goal_reached = False
-        while not goal_reached:
-
-            action = self.robot.act(observation)
-            observation, reward, goal_reached, socal_info = self.environment.step(
-                action
-            )
-            states.append(self.environment.robot.policy.last_state)
-            actions.append(action)
-            rewards.append(reward)
-
-            # Check if robot exhibited discomforting behavior.
-            if isinstance(socal_info, info.Discomfort):
-                discomfort += 1
-
-        if isinstance(socal_info, info.ReachGoal):
-            success += 1
-            success_times.append(self.environment.global_time)
-        elif isinstance(socal_info, info.Collision):
-            collision += 1
-            collision_times.append(self.environment.global_time)
-        elif isinstance(socal_info, info.Timeout):
-            timeout += 1
-            timeout_times.append(self.environment.time_limit)
-
-        return self._process_epoch(states, actions, rewards)
-
-    def _process_epoch(self, states: List, actions: List, rewards: List) -> None:
-        """Extract the transition states from the episode."""
-        history = []
-        for idx, state in enumerate(states[:-1]):
-            reward = rewards[idx]
-            # define the value of states in IL as cumulative discounted rewards, which is the same in RL
-            state = self.target_policy.transform(state)
-            next_state = self.target_policy.transform(states[idx + 1])
-            next_state = states[idx + 1]
-            if idx == len(states) - 1:
-                # terminal state
-                value = reward
-            else:
-                value = 0
-            value = torch.Tensor([value])
-            reward = torch.Tensor([rewards[idx]])
-
-            history.append(
-                {
-                    "robot_state": state[0],
-                    "humans_state": state[1],
-                    "value": value,
-                    "reward": reward,
-                    "next_robot_state": next_state[0],
-                    "next_humans_state": next_state[1],
-                }
-            )
-
-        return history
 
 
 class Dataset(data.Dataset):
     def __init__(self):
         self.transitions = []
+        self.trainable_length = 0
 
     def __len__(self):
-        return len(self.transitions)
+        return self.trainable_length
 
     def __getitem__(self, idx):
         return self.transitions[idx]
@@ -179,18 +75,18 @@ def _collate_fn(data_batch):
 class Trainer:
     def __init__(
         self,
+        cfg: Dict,
         models_cfg: Dict,
         device: torch.device,
         num_explorers: int,
         num_learners: int,
         explorer_nodes: List[int],
-        cfg
-    ):
+    ) -> None:
+        self.cfg = cfg
         self.num_explorers = num_explorers
         self.explorer_nodes = explorer_nodes
         self.epochs = 40
         self.device = device
-        self.agent_rref = rpc.RRef(self)
 
         # Create models
         gnn_cfg = models_cfg.get("gnn")
@@ -240,6 +136,9 @@ class Trainer:
 
         self.explorer_references = []
         self.episode_history = {}
+
+        # Get remote references to the associated explorer nodes. Create each
+        # explorer's necessary info.
         environment = gym.make(
             "CrowdSim-v0",
             env_cfg=cfg.get("sim-environment"),
@@ -257,32 +156,110 @@ class Trainer:
         sim_robot.set_policy(robot_policy)
         environment.configure(config.BaseEnvConfig())
         environment.set_robot(sim_robot)
-        
+
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
-            self.explorer_references.append(
-                rpc.remote(explorer_info, Explorer, args=(environment, sim_robot, robot_policy, distributed.get_rank()))
-            )
             self.episode_history[explorer_info.id] = []
-
-    def run_episode(self):
-        futures = []
+            self.explorer_references.append(
+                rpc.remote(
+                    explorer_info,
+                    explorer.Explorer,
+                    args=(
+                        environment,
+                        sim_robot,
+                        robot_policy,
+                    ),
+                )
+            )
+        # Send the explorers off to continuously explore.
         for explorer_rref in self.explorer_references:
+            explorer_rref.rpc_async().continuous_exploration()
 
+    def _broadcast_models(self) -> None:
+        """Send the model weights to the explorer nodes."""
+        futures = []
+        gnn_state = {
+            name: tensor.cpu()
+            for name, tensor in distributed_utils.unwrap_ddp(self.gnn)
+            .state_dict()
+            .items()
+        }
+        value_state = {
+            name: tensor.cpu()
+            for name, tensor in distributed_utils.unwrap_ddp(self.value_estimator)
+            .state_dict()
+            .items()
+        }
+        state_state = {
+            name: tensor.cpu()
+            for name, tensor in distributed_utils.unwrap_ddp(self.state_estimator)
+            .state_dict()
+            .items()
+        }
+        for explorer_rref in self.explorer_references:
             futures.append(
-                explorer_rref.rpc_async().run_episode(self.agent_rref)
+                explorer_rref.rpc_async().update_models(
+                    {
+                        "gnn": gnn_state,
+                        "value_estimator": value_state,
+                        "state_estimator": state_state,
+                    }
+                )
             )
 
-            rets = torch.futures.wait_all(futures)
+        torch.futures.wait_all(futures)
+        distributed.barrier()
+
+    def _collate_explorations(self):
+        """Call out to the explorer nodes and ask for their histories."""
+        # See if any nodes have history.
+        num_histories = [0 for _ in range(len(self.explorer_references))]
+
+        while sum(num_histories) < 100:
+            futures = [
+                explorer_rref.rpc_async().get_history_len()
+                for explorer_rref in self.explorer_references
+            ]
+            num_histories = torch.futures.wait_all(futures)
+            time.sleep(5.0)
+            print(num_histories)
+
+        history_futures = []
+        for num_history, explorer_rref in zip(futures, self.explorer_references):
+            if num_history:
+                history_futures.append(explorer_rref.rpc_async().get_history())
+
+        histories = torch.futures.wait_all(history_futures)
+        for history in histories:
+            self.dataset.transitions.extend(history)
+        self.dataset.trainable_length += 100
+        print(len(self.dataset.transitions))
+
+        clear_histories = []
+        for num_history, explorer_rref in zip(futures, self.explorer_references):
+            if num_history:
+                clear_histories.append(explorer_rref.rpc_async().clear_history())
+
+        torch.futures.wait_all(clear_histories)
+        distributed.barrier()
 
     def continous_train(self) -> None:
-        # Send the same model out to all explorer nodes
+        """Target function to call after intialization.
+
+        This function loops over the available training data and trains our models.
+        Periodically, a trainer will look out to the explorer nodes for new data. At
+        this point, our trainer will also send the explorer a copy of the latest model
+        weights."""
+
+        # First, send out this trainer's copy of the weights to the explorer nodes.
         self._broadcast_models()
+
+        # Wait for the first round of explorations to come back from explorers.
 
         for epoch in range(self.epochs):
 
             # Update memory from explorer workers
-            self._collate_explorations(self.process_group)
+            self._collate_explorations()
 
             loader = data.DataLoader(
                 self.dataset,
@@ -292,7 +269,7 @@ class Trainer:
                 shuffle=True,
             )
 
-            for batch in loader:
+            for idx, batch in enumerate(loader):
                 (
                     robot_states,
                     human_states,
@@ -307,7 +284,6 @@ class Trainer:
                 rewards = rewards.to(self.device)
                 next_robot_states = next_robot_states.to(self.device)
                 next_human_states = next_human_states.to(self.device)
-
                 robot_state, human_state = self.gnn(robot_states, human_states)
                 outputs = self.value_estimator(robot_state)
 
@@ -331,55 +307,7 @@ class Trainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 print(
-                    f"epoch={epoch}. total_loss={total_loss.item():.4f}. rewards={rewards.mean().item():.4f}"
+                    f"{self.device}. idx={idx}. epoch={epoch}. total_loss={total_loss.item():.4f}. rewards={rewards.mean().item():.4f}"
                 )
 
-            # After epoch, send weights out to explorer nodes:
             self._broadcast_models()
-
-    def process_batch(self, batch):
-        (
-            robot_states,
-            human_states,
-            rewards,
-            next_robot_states,
-            next_human_states,
-        ) = batch
-
-        robot_states = torch.stack(robot_states).squeeze(1)
-        human_states = torch.stack(human_states).squeeze(1)
-        rewards = torch.stack(rewards)
-        next_robot_states = torch.stack(next_robot_states).squeeze(1)
-        next_human_states = torch.stack(next_human_states).squeeze(1)
-
-        # if use_cuda:
-        #    robot_states = robot_states.cuda()
-        #    human_states = human_states.cuda()
-        #    rewards = rewards.cuda()
-        #    next_robot_states = next_robot_states.cuda()
-        #    next_human_states = next_human_states.cuda()
-
-        robot_state, human_state = self.gnn(robot_states, human_states)
-        outputs = self.value_estimator(robot_state)
-
-        gamma_bar = pow(0.9, 0.25 * 1.0)
-
-        next_robot_states, next_human_state = self.gnn(
-            next_robot_states.transpose(1, 2), next_human_states.transpose(1, 2)
-        )
-        next_value = self.value_estimator(next_robot_states)
-        target_values = rewards.unsqueeze(-1) + gamma_bar * next_value
-        value_loss = self.l1(outputs, target_values)
-
-        _, next_human_states_est = self.state_estimator(
-            robot_states, human_state, None,
-        )
-        state_loss = self.l2(
-            next_human_states_est.transpose(1, 2), next_human_states.squeeze(1)
-        )
-        total_loss = value_loss + state_loss
-
-        total_loss.backward()
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        print(f"loss={total_loss.item():.5f}, rewards={torch.mean(rewards).item():.5f}")
