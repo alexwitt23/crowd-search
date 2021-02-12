@@ -6,9 +6,9 @@ RUN apt-get update && \
 
 WORKDIR /setup
 
-COPY requirements.txt /setup
-RUN python3 -m pip install Cython==0.29.21
-RUN python3 -m pip install -r requirements.txt
+COPY requirements.txt .
+RUN python3 -m pip install pip Cython==0.29.21
+RUN python3 -m pip install --ignore-installed -r requirements.txt
 
 # Setup the Python-RVO2 project
 RUN git clone https://github.com/sybrenstuvel/Python-RVO2.git \

@@ -3,6 +3,7 @@ import time
 import random
 from typing import Dict, List
 
+import gym
 import torch
 from torch import nn
 from torch import distributed
@@ -10,21 +11,11 @@ from torch.distributed import rpc
 from torch.utils import data
 from torch.nn import parallel
 
-from crowd_search import models
-from crowd_search import distributed_utils
-
-
-import gym
-import torch
-import tqdm
-from torch import distributed
-from torch.distributed import rpc
-from torch import multiprocessing
-
-from crowd_search import explorer
 from crowd_search import config
-from crowd_search import policy
 from crowd_search import distributed_utils
+from crowd_search import explorer
+from crowd_search import models
+from crowd_search import policy
 from third_party.crowd_sim.envs.utils import agent
 
 
@@ -78,12 +69,9 @@ class Trainer:
         cfg: Dict,
         models_cfg: Dict,
         device: torch.device,
-        num_explorers: int,
-        num_learners: int,
         explorer_nodes: List[int],
     ) -> None:
         self.cfg = cfg
-        self.num_explorers = num_explorers
         self.explorer_nodes = explorer_nodes
         self.epochs = 40
         self.device = device
@@ -129,13 +117,12 @@ class Trainer:
             lr=1.0e-3,
         )
 
-        self.l2 = torch.nn.MSELoss()
-        self.l1 = torch.nn.L1Loss()
+        self.l2 = nn.MSELoss()
+        self.l1 = nn.L1Loss()
 
         self.dataset = Dataset()
 
         self.explorer_references = []
-        self.episode_history = {}
 
         # Get remote references to the associated explorer nodes. Create each
         # explorer's necessary info.
@@ -159,25 +146,20 @@ class Trainer:
 
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
-            self.episode_history[explorer_info.id] = []
             self.explorer_references.append(
                 rpc.remote(
                     explorer_info,
                     explorer.Explorer,
-                    args=(
-                        environment,
-                        sim_robot,
-                        robot_policy,
-                    ),
+                    args=(environment, sim_robot, robot_policy),
                 )
             )
+
         # Send the explorers off to continuously explore.
         for explorer_rref in self.explorer_references:
             explorer_rref.rpc_async().continuous_exploration()
 
     def _broadcast_models(self) -> None:
         """Send the model weights to the explorer nodes."""
-        futures = []
         gnn_state = {
             name: tensor.cpu()
             for name, tensor in distributed_utils.unwrap_ddp(self.gnn)
@@ -196,6 +178,7 @@ class Trainer:
             .state_dict()
             .items()
         }
+        futures = []
         for explorer_rref in self.explorer_references:
             futures.append(
                 explorer_rref.rpc_async().update_models(
@@ -253,6 +236,7 @@ class Trainer:
 
         # First, send out this trainer's copy of the weights to the explorer nodes.
         self._broadcast_models()
+        distributed.barrier()
 
         # Wait for the first round of explorations to come back from explorers.
 
@@ -267,6 +251,7 @@ class Trainer:
                 pin_memory=True,
                 collate_fn=_collate_fn,
                 shuffle=True,
+                num_workers=1,
             )
 
             for idx, batch in enumerate(loader):

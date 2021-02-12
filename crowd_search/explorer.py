@@ -3,8 +3,9 @@ The weights are updated periodically based on the schedule of trainer nodes.
 Every so ofte, the trainer nodes will ask for the explorers most recent episode
 history to queue for training."""
 
-import copy
 import threading
+import copy
+import time
 from typing import Dict, List
 
 import torch
@@ -33,45 +34,52 @@ class Explorer:
         """
         self.id = rpc.get_worker_info().id
         # Copy to make entirly sure these are owned by the explorer process.
-        self.environment = environment
-        self.robot = robot
-        self.target_policy = robot_policy
+        self.environment = copy.deepcopy(environment)
+        self.robot = copy.deepcopy(robot)
+        self.target_policy = copy.deepcopy(robot_policy)
         self.history = []
         self.lock = threading.Lock()
 
+    @torch.no_grad()
     def continuous_exploration(self):
         """Have this explorer continiously explore the environment and collect
         the results. This function is called by a trainer node."""
 
         while True:
-            # Returns list of history tensors. This is done in two steps to prevent
-            # any locking issues. (Might be unnecessary, but not harmful).
-            history = self.run_episode()
-            self.history += history
+            with self.lock:
+                # Returns list of history tensors. This is done in two steps to prevent
+                # any locking issues. (Might be unnecessary, but not harmful).
+                history = self.run_episode()
+                self.history += history
+
+            time.sleep(1.0)
 
     def get_history_len(self):
         """Helper function to return length of the history currently held."""
-        return len(self.history)
+        with self.lock:
+            return len(self.history)
 
     def get_history(self):
         """Return the history. This function will bee called by trainer nodes."""
-        return self.history
+        with self.lock:
+            return self.history
 
     def clear_history(self):
         """Clear the history. Typically called by trainer node after new history has
         been recieved."""
-        self.history.clear()
+        with self.lock:
+            self.history.clear()
 
-    @torch.no_grad()
     def run_episode(self):
         """Run a single episode of the crowd search game.
         
         This function is passed a remote refference to an agent with
         an actual copy of the weights."""
+        print("WELL?")
         phase = "train"
         assert phase in ["train", "val", "test"]
         self.running_episode = True
-
+        print("WELL?")
         self.robot.policy.set_phase(phase)
         self.environment.set_robot(self.robot)
 
@@ -100,7 +108,7 @@ class Explorer:
             actions.append(action)
             rewards.append(reward)
             print(reward)
-        
+
             # Check if robot exhibited discomforting behavior.
             if isinstance(socal_info, info.Discomfort):
                 discomfort += 1
@@ -114,9 +122,9 @@ class Explorer:
         elif isinstance(socal_info, info.Timeout):
             timeout += 1
             timeout_times.append(self.environment.time_limit)
-        
+
         history = self._process_epoch(states, actions, rewards)
-        print("DONE")
+
         return history
 
     def _process_epoch(self, states: List, actions: List, rewards: List) -> None:

@@ -1,4 +1,7 @@
+#!/usr/bin/env python3
+
 import argparse
+import time
 import pathlib
 import os
 
@@ -29,11 +32,7 @@ def _get_learner_explorers(learner_rank, num_explorers, num_learners):
 
 
 def train(
-    local_rank: int,
-    cfg: dict,
-    num_learners: int,
-    num_explorers: int,
-    world_size: int
+    local_rank: int, cfg: dict, num_learners: int, num_explorers: int, world_size: int
 ) -> None:
     """Main entrypoint function
 
@@ -54,9 +53,7 @@ def train(
         is_explorer = False
         device = torch.device(f"cuda:{local_rank}")
 
-    is_main = local_rank == 0
-
-    train_cfg= cfg.get("training")
+    train_cfg = cfg.get("training")
     num_learners = train_cfg.get("num-learners")
     num_explorers = train_cfg.get("num-explorers")
 
@@ -64,14 +61,13 @@ def train(
         learner_rank: _get_learner_explorers(learner_rank, num_explorers, num_learners)
         for learner_rank in range(num_learners)
     }
-
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions(rpc_timeout=120)
     rpc_backend_options.init_method = "tcp://localhost:29501"
 
     if not is_explorer:
         # Create process to distributed model training across trainer processes.
         distributed.init_process_group(
-            "gloo",
+            "nccl",
             rank=local_rank,
             world_size=num_learners,
             init_method="tcp://localhost:29500",
@@ -86,8 +82,6 @@ def train(
             cfg=cfg,
             models_cfg=cfg.get("models"),
             device=device,
-            num_explorers=num_explorers,
-            num_learners=num_learners,
             explorer_nodes=learner_explorer_groups[local_rank],
         )
         trainer_node.continous_train()
@@ -115,7 +109,7 @@ if __name__ == "__main__":
 
     # Read config
     cfg = yaml.safe_load(args.config_path.read_text())
-    train_cfg= cfg.get("training")
+    train_cfg = cfg.get("training")
     num_learners = train_cfg.get("num-learners")
     num_explorers = train_cfg.get("num-explorers")
 
