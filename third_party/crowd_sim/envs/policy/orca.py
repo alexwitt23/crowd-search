@@ -65,6 +65,7 @@ class ORCA(Policy):
         self.radius = 0.3
         self.max_speed = 1
         self.sim = None
+        self.time_step = 0.25
 
     def configure(self, config):
         return
@@ -72,7 +73,7 @@ class ORCA(Policy):
     def set_phase(self, phase):
         return
 
-    def predict(self, state):
+    def predict(self, human_states, robot_state):
         """
         Create a rvo2 simulation at each time step and run one step
         Python-RVO2 API: https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/rvo2.pyx
@@ -83,7 +84,6 @@ class ORCA(Policy):
         :param state:
         :return:
         """
-        robot_state = state.robot_state
         params = (
             self.neighbor_dist,
             self.max_neighbors,
@@ -101,19 +101,20 @@ class ORCA(Policy):
                 self.time_step, *params, self.radius, self.max_speed
             )
             self.sim.addAgent(
-                robot_state.position,
+                (robot_state[0], robot_state[1]),
                 *params,
-                robot_state.radius + 0.01 + self.safety_space,
-                robot_state.v_pref,
-                robot_state.velocity
+                robot_state[4] + 0.01 + self.safety_space,
+                robot_state[7],
+                (robot_state[2], robot_state[3]),
             )
-            for human_state in state.human_states:
+            for human_state in human_states:
+                print(human_state)
                 self.sim.addAgent(
-                    human_state.position,
+                    (human_state[0], human_state[1]),
                     *params,
-                    human_state.radius + 0.01 + self.safety_space,
+                    human_state[4] + 0.01 + self.safety_space,
                     self.max_speed,
-                    human_state.velocity
+                    (human_state[2], human_state[3]),
                 )
         else:
             self.sim.setAgentPosition(0, robot_state.position)
@@ -124,7 +125,7 @@ class ORCA(Policy):
 
         # Set the preferred velocity to be a vector of unit magnitude (speed) in the direction of the goal.
         velocity = np.array(
-            (robot_state.gx - robot_state.px, robot_state.gy - robot_state.py)
+            (robot_state[5] - robot_state[0], robot_state[6] - robot_state[1])
         )
         speed = np.linalg.norm(velocity)
         pref_vel = velocity / speed if speed > 1 else velocity
@@ -136,13 +137,13 @@ class ORCA(Policy):
         # pref_vel += perturb_vel
 
         self.sim.setAgentPrefVelocity(0, tuple(pref_vel))
-        for i, human_state in enumerate(state.human_states):
+        for idx, _ in enumerate(human_states):
             # unknown goal position of other humans
-            self.sim.setAgentPrefVelocity(i + 1, (0, 0))
+            self.sim.setAgentPrefVelocity(idx + 1, (0, 0))
 
         self.sim.doStep()
         action = ActionXY(*self.sim.getAgentVelocity(0))
-        self.last_state = state
+        self.last_state = (robot_state, human_states)
 
         return action
 

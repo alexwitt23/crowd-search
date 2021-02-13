@@ -4,7 +4,7 @@ from typing import Dict
 
 import torch
 import numpy as np
-from numpy.linalg import norm
+from torch.distributed import rpc
 
 from crowd_search import models
 from third_party.crowd_sim.envs.utils.agent_actions import ActionRot, ActionXY
@@ -111,12 +111,6 @@ class CrowdSearchPolicy:
             robot_state: Tensor containing robot state. Comes in with size [1, 9]
             human_states: Tensor containing human states. Comes in with size [Num_humans, 5]
         """
-
-        if self.phase is None or self.device is None:
-            raise AttributeError("Phase, device attributes have to be set!")
-        if self.phase == "train" and self.epsilon is None:
-            raise AttributeError("Epsilon attribute has to be set in training phase")
-
         # if self.reach_destination(state):
         #    return ActionXY(0, 0) if self.kinematics == "holonomic" else ActionRot(0, 0)
         if self.action_space is None:
@@ -130,7 +124,6 @@ class CrowdSearchPolicy:
             max_value = float("-inf")
             max_traj = None
 
-            print(robot_state.shape, human_states.shape)
             # Unsqeeze to add batch dim and BNC -> BCN. Since all our layers are
             # convolutions.
             robot_state = robot_state.unsqueeze(0).transpose(1, 2).to(self.device)
@@ -138,7 +131,6 @@ class CrowdSearchPolicy:
 
             # Get the embedding of the current robot and human states.
             state_embed = self.gnn(robot_state, human_states)
-
             # Given an known action from our potential actions space, estimate the state that
             # results from taking that action.
             for action in self.action_space:
@@ -161,7 +153,9 @@ class CrowdSearchPolicy:
                 if value > max_value:
                     max_value = value
                     max_action = action
-                    max_traj = [((robot_state, human_states), action, reward_est)] + max_next_traj
+                    max_traj = [
+                        ((robot_state, human_states), action, reward_est)
+                    ] + max_next_traj
 
             if max_action is None:
                 raise ValueError("Value network is not well trained.")
@@ -202,29 +196,35 @@ class CrowdSearchPolicy:
         return clipped_action_space
 
     @torch.no_grad()
-    def V_planning(self, robot_state: torch.Tensor, human_state: torch.Tensor, depth, width):
+    def V_planning(
+        self, robot_state: torch.Tensor, human_state: torch.Tensor, depth, width
+    ):
         """ Plans n steps into future. Computes the value for the current state as well as the trajectories
         defined as a list of (state, action, reward) triples
 
         """
-        
+
         robot_state_embed, human_state_embed = self.gnn(robot_state, human_state)
         current_state_value = self.value_estimator(robot_state_embed)
 
         if depth == 1:
             return current_state_value, [((robot_state, human_state), None, None)]
 
-        #if self.do_action_clip:
+        # if self.do_action_clip:
         #    action_space_clipped = self.action_clip(state, self.action_space, width)
-        #else:
+        # else:
         action_space_clipped = self.action_space
 
         returns = []
         trajs = []
 
         for action in action_space_clipped:
-            next_robot_state, next_human_state = self.state_estimator(robot_state, human_state_embed, action)
-            reward_est = self.estimate_reward(next_robot_state, next_human_state, action)
+            next_robot_state, next_human_state = self.state_estimator(
+                robot_state, human_state_embed, action
+            )
+            reward_est = self.estimate_reward(
+                next_robot_state, next_human_state, action
+            )
             next_value, next_traj = self.V_planning(
                 next_robot_state, next_human_state, depth - 1, self.planning_width
             )
@@ -243,10 +243,7 @@ class CrowdSearchPolicy:
 
     @torch.no_grad()
     def estimate_reward(
-        self,
-        robot_state: torch.Tensor,
-        human_states: torch.Tensor,
-        action: ActionXY
+        self, robot_state: torch.Tensor, human_states: torch.Tensor, action: ActionXY
     ) -> float:
         # TODO(alex): this should really be batched
         # BCN -> BNC -> NC
@@ -286,7 +283,9 @@ class CrowdSearchPolicy:
 
         start_pos = torch.Tensor([robot_state[:, 0], robot_state[:, 1]]).to(self.device)
         end_position = torch.Tensor([px, py]).to(self.device)
-        goal_position = torch.Tensor([robot_state[:, 5], robot_state[:, 6]]).to(self.device)
+        goal_position = torch.Tensor([robot_state[:, 5], robot_state[:, 6]]).to(
+            self.device
+        )
         reaching_goal = torch.norm(end_position - goal_position) < robot_state[0, 4]
         furthur_away = torch.norm(end_position - goal_position) > torch.norm(
             start_pos - goal_position

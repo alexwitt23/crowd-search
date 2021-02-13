@@ -1,8 +1,28 @@
-"""Define different states for the different types of observations that can
-be made from the different agents. A robot can only know position, velocity,
-and radius of a person. TODO(alex): add direction?."""
-
 import torch
+
+
+class AgentState:
+    """A state class to house the state of both human or robots."""
+
+    def __init__(self, state_tensor: torch.Tensor) -> None:
+        """
+        Args:
+            state_tensor: for humans this is [px, py, vx, vy, radius]. For robots
+                it is [px, py, vx, vy, radius, goalx, goaly, preferred_v, direction]
+        """
+        self.state_tensor = state_tensor
+
+    def get_position(self):
+        ...
+
+    def get_velocity(self):
+        ...
+
+    def get_goal_position(self):
+        ...
+
+    def get_radius(self):
+        ...
 
 
 class FullState:

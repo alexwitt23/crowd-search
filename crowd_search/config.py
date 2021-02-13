@@ -29,7 +29,7 @@ class BaseEnvConfig:
     sim.circle_radius = 4
     sim.human_num = 5
     sim.nonstop_human = False
-    sim.centralized_planning = True
+    sim.centralized_planning = False
 
     humans = Config()
     humans.visible = True

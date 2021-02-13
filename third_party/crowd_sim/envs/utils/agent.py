@@ -202,7 +202,6 @@ class Robot(Agent):
             raise AttributeError("Policy attribute has to be set!")
         # Get the robot's state.
         robot_state = self.get_full_state().unsqueeze(0)
-        print(robot_state.shape, human_states.shape)
         action = self.policy.predict(robot_state, human_states)
 
         return action

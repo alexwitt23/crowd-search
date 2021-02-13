@@ -17,7 +17,6 @@ from crowd_search import policy
 from crowd_search import trainer
 from third_party.crowd_sim.envs.utils import agent
 
-
 _LOG_DIR = pathlib.Path("~/runs/crowd-search").expanduser()
 
 
@@ -30,7 +29,7 @@ def _get_learner_explorers(learner_rank, num_explorers, num_learners):
         )
     )
 
-
+torch.set_num_threads(1)
 def train(
     local_rank: int, cfg: dict, num_learners: int, num_explorers: int, world_size: int
 ) -> None:
@@ -48,7 +47,7 @@ def train(
     use_cuda = torch.cuda.is_available()
     is_explorer = True
     device = torch.device("cpu")
-    if use_cuda and local_rank < num_learners:
+    if use_cuda and local_rank < num_learners and local_rank < num_learners:
         torch.cuda.set_device(local_rank)
         is_explorer = False
         device = torch.device(f"cuda:{local_rank}")
@@ -62,7 +61,7 @@ def train(
         for learner_rank in range(num_learners)
     }
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions(
-        num_worker_threads=1, init_method="tcp://localhost:29501"
+        num_worker_threads=20, init_method="tcp://localhost:29501", rpc_timeout=1000
     )
 
     if not is_explorer:
@@ -95,6 +94,9 @@ def train(
             world_size=world_size,
             rpc_backend_options=rpc_backend_options,
         )
+        import os
+
+        print("I'm process", os.getpid())
 
     rpc.shutdown()
 
