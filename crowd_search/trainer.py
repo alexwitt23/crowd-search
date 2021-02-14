@@ -1,6 +1,8 @@
 import copy
 import time
+import pathlib
 import random
+import datetime
 from typing import Dict, List
 
 import gym
@@ -9,6 +11,7 @@ from torch import nn
 from torch import distributed
 from torch.distributed import rpc
 from torch.utils import data
+from torch.utils import tensorboard
 from torch.nn import parallel
 
 from crowd_search import agents
@@ -47,12 +50,12 @@ def _collate_fn(data_batch):
         next_robot_state.append(data["next_robot_state"])
         next_humans_state.append(data["next_humans_state"])
 
-    robot_state = torch.stack(robot_state).squeeze(1)
-    humans_state = torch.stack(humans_state).squeeze(1)
+    robot_state = torch.stack(robot_state).transpose(-2, -1)
+    humans_state = torch.stack(humans_state).transpose(-2, -1)
     value = torch.stack(value)
     reward = torch.stack(reward)
-    next_robot_state = torch.stack(next_robot_state).squeeze(1).transpose(-2, -1)
-    next_humans_state = torch.stack(next_humans_state).squeeze(1).transpose(-2, -1)
+    next_robot_state = torch.stack(next_robot_state).transpose(-2, -1)
+    next_humans_state = torch.stack(next_humans_state).transpose(-2, -1)
 
     return (
         robot_state,
@@ -70,12 +73,26 @@ class Trainer:
         cfg: Dict,
         models_cfg: Dict,
         device: torch.device,
+        num_learners: int,
         explorer_nodes: List[int],
+        rank: int,
+        run_dir: pathlib.Path,
     ) -> None:
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
         self.epochs = 40
         self.device = device
+        self.num_learners = num_learners
+
+        self.run_dir = run_dir
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # If main node, create a logger
+        self.is_main = False
+        if rank == 0:
+            global logger
+            logger = tensorboard.SummaryWriter(run_dir)
+            self.is_main = True
 
         # Create models
         gnn_cfg = models_cfg.get("gnn")
@@ -159,13 +176,70 @@ class Trainer:
         for explorer_rref in self.explorer_references:
             futures.append(explorer_rref.rpc_async().run_episode())
 
-        histories = torch.futures.wait_all(futures)
-        
-        for history in histories:
-            self.dataset.transitions.extend(copy.deepcopy(history))
+        explorer_histories = torch.futures.wait_all(futures)
+        histories = []
+        for history in explorer_histories:
+            histories.extend(history)
+
+        histories = self.combine_dataset(histories)
+        self.dataset.transitions = histories
+
+        # Clear out the explorer history.
+        futures = []
+        for explorer_rref in self.explorer_references:
+            futures.append(explorer_rref.rpc_async().clear_history())
+
+        explorer_histories = torch.futures.wait_all(futures)
 
         distributed.barrier()
 
+    def combine_dataset(self, histories) -> None:
+        """This function sends the new history data from the explorers to all training
+        nodes so traing batching is efficient as possible. Since the trainer nodes are
+        on their own distributed process group, we don't have to worry about specifying
+        one here."""
+        output = [None] * self.num_learners
+        distributed.all_gather_object(output, histories)
+        histories = []
+        for history in output:
+            histories.extend(history)
+
+        return histories
+
+    def broadcast_models(self) -> None:
+        """Send the newly trained models out to the trainer nodes."""
+        futures = []
+
+        gnn = {
+            name: weight.cpu()
+            for name, weight in distributed_utils.unwrap_ddp(self.gnn)
+            .state_dict()
+            .items()
+        }
+        state_est = {
+            name: weight.cpu()
+            for name, weight in distributed_utils.unwrap_ddp(self.state_estimator)
+            .state_dict()
+            .items()
+        }
+        value_est = {
+            name: weight.cpu()
+            for name, weight in distributed_utils.unwrap_ddp(self.value_estimator)
+            .state_dict()
+            .items()
+        }
+        for explorer_rref in self.explorer_references:
+            futures.append(
+                explorer_rref.rpc_async().update_models(
+                    {
+                        "gnn": gnn,
+                        "state_estimator": state_est,
+                        "value_estimator": value_est,
+                    }
+                )
+            )
+
+        explorer_histories = torch.futures.wait_all(futures)
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -174,21 +248,21 @@ class Trainer:
         Periodically, a trainer will look out to the explorer nodes for new data. At
         this point, our trainer will also send the explorer a copy of the latest model
         weights."""
-
+        self.broadcast_models()
         # Wait for the first round of explorations to come back from explorers.
-
+        global_step = 0
         for epoch in range(self.epochs):
-
             # Update memory from explorer workers
             self._collate_explorations()
-
+            print(f"Starting epoch {epoch}.")
+            sampler = data.distributed.DistributedSampler(self.dataset, shuffle=True)
             loader = data.DataLoader(
                 self.dataset,
                 batch_size=20,
                 pin_memory=True,
                 collate_fn=_collate_fn,
-                shuffle=True,
                 num_workers=0,
+                sampler=sampler,
             )
 
             for idx, batch in enumerate(loader):
@@ -228,6 +302,12 @@ class Trainer:
                 total_loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                print(
-                    f"{self.device}. idx={idx}. epoch={epoch}. total_loss={total_loss.item():.4f}. rewards={rewards.mean().item():.4f}"
-                )
+                if self.is_main:
+                    logger.add_scalar("total_loss", total_loss.item(), global_step)
+                    logger.add_scalar("avg_reward", rewards.mean().item(), global_step)
+                    print(
+                        f"idx={idx}. epoch={epoch}. total_loss={total_loss.item():.4f}. rewards={rewards.mean().item():.4f}"
+                    )
+                global_step += 1
+
+            self.broadcast_models()

@@ -11,13 +11,9 @@ training:
   # doing all CPU training.
   num-learners: 2
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 4
+  num-explorers: 8
   # The batch size on one training node (a.k.a the same for all trainers)
   batch-size: 20
-  # How many pieces of training data a trainer node should wait to get from the
-  # explorer nodes. The training node will wait until the explorers return this
-  # amount of data.
-  new-explorer-amount: 200
 
 
 # These are params sent to the crowd_sim environment

@@ -1,4 +1,5 @@
-"""Describe the policy that govern's the robot's decisions."""
+"""Describe the policy that governs the robot's decisions."""
+
 import random
 from typing import Dict
 

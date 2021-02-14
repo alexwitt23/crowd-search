@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import datetime
 import time
 import pathlib
 import os
@@ -29,7 +30,10 @@ def _get_learner_explorers(learner_rank, num_explorers, num_learners):
         )
     )
 
+
 torch.set_num_threads(1)
+
+
 def train(
     local_rank: int, cfg: dict, num_learners: int, num_explorers: int, world_size: int
 ) -> None:
@@ -61,7 +65,7 @@ def train(
         for learner_rank in range(num_learners)
     }
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions(
-        num_worker_threads=20, init_method="tcp://localhost:29501", rpc_timeout=1000
+        init_method="tcp://localhost:29501", rpc_timeout=240
     )
 
     if not is_explorer:
@@ -82,11 +86,15 @@ def train(
             cfg=cfg,
             models_cfg=cfg.get("models"),
             device=device,
+            num_learners=num_learners,
             explorer_nodes=learner_explorer_groups[local_rank],
+            rank=local_rank,
+            run_dir=_LOG_DIR
+            / datetime.datetime.now().isoformat().split(".")[0].replace(":", "."),
         )
         trainer_node.continous_train()
     else:
-        # If not a training node, wait to launch explorers within the training
+        # If not a training node, wait to launch explorers within the training nodes
         # object so the pipline can be established.
         rpc.init_rpc(
             name=f"Explorer:{local_rank}",
@@ -94,9 +102,6 @@ def train(
             world_size=world_size,
             rpc_backend_options=rpc_backend_options,
         )
-        import os
-
-        print("I'm process", os.getpid())
 
     rpc.shutdown()
 

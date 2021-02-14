@@ -1,6 +1,5 @@
 """Explorer objects which maintain a copy of the environment."""
 
-import threading
 import copy
 import time
 from typing import Dict, List
@@ -46,12 +45,9 @@ class Explorer:
             "cpu",
         )
         self.history = []
-        self.lock = threading.Lock()
-        self.future_history = torch.futures.Future()
 
     def get_history_len(self):
         """Helper function to return length of the history currently held."""
-
         return len(self.history)
 
     def get_history(self):
@@ -87,7 +83,6 @@ class Explorer:
         observation = self.environment.reset(phase)
 
         states, actions, rewards = [], [], []
-        fut = self.future_history
         goal_reached = False
         while not goal_reached:
             robot_state = self.environment.robot.get_full_state()
@@ -99,22 +94,6 @@ class Explorer:
             states.append((robot_state, observation))
             actions.append(action)
             rewards.append(reward)
-
-            # Check if robot exhibited discomforting behavior.
-            if isinstance(socal_info, info.Discomfort):
-                discomfort += 1
-
-            print(action)
-
-        if isinstance(socal_info, info.ReachGoal):
-            success += 1
-            success_times.append(self.environment.global_time)
-        elif isinstance(socal_info, info.Collision):
-            collision += 1
-            collision_times.append(self.environment.global_time)
-        elif isinstance(socal_info, info.Timeout):
-            timeout += 1
-            timeout_times.append(self.environment.time_limit)
 
         history = self._process_epoch(states, actions, rewards)
 
@@ -151,6 +130,7 @@ class Explorer:
     def update_models(self, models: Dict[str, torch.Tensor]) -> None:
         """Pass in a dictionary of model_state_dicts that will be used to
         update this Explorer's local copies."""
-        self.robot.policy.gnn.load_state_dict(models["gnn"])
-        self.robot.policy.value_estimator.load_state_dict(models["value_estimator"])
-        self.robot.policy.state_estimator.load_state_dict(models["state_estimator"])
+        self.policy.gnn.load_state_dict(models["gnn"])
+        self.policy.value_estimator.load_state_dict(models["value_estimator"])
+        self.policy.state_estimator.load_state_dict(models["state_estimator"])
+        print("updated models")

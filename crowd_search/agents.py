@@ -1,7 +1,5 @@
+import abc
 from typing import Any, Dict
-
-import torch
-
 
 import torch
 
@@ -83,6 +81,7 @@ class Human(Agent):
     def get_full_state(self) -> torch.Tensor:
         return self.state_tensor.unsqueeze(0)
 
+
 class Robot(Agent):
     """This class is very similar to the Human class execpt that we also
     allow the robot to _act_ in the environment by giving it a policy to control."""
@@ -126,7 +125,6 @@ class Robot(Agent):
     def compute_position(self, action, delta_t: float):
         pos = self.get_position() + torch.Tensor([action.vx, action.vy]) * delta_t
         return pos
-
 
     def get_full_state(self) -> torch.Tensor:
         return self.state_tensor.unsqueeze(0)
