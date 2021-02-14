@@ -1,8 +1,28 @@
-"""Define different states for the different types of observations that can
-be made from the different agents. A robot can only know position, velocity,
-and radius of a person. TODO(alex): add direction?."""
-
 import torch
+
+
+class AgentState:
+    """A state class to house the state of both human or robots."""
+
+    def __init__(self, state_tensor: torch.Tensor) -> None:
+        """
+        Args:
+            state_tensor: for humans this is [px, py, vx, vy, radius]. For robots
+                it is [px, py, vx, vy, radius, goalx, goaly, preferred_v, direction]
+        """
+        self.state_tensor = state_tensor
+
+    def get_position(self):
+        ...
+
+    def get_velocity(self):
+        ...
+
+    def get_goal_position(self):
+        ...
+
+    def get_radius(self):
+        ...
 
 
 class FullState:
@@ -70,7 +90,7 @@ class FullState:
         ).unsqueeze(0)
 
     def get_observable_state(self):
-        return ObservableState(self.px, self.py, self.vx, self.vy, self.radius)
+        return torch.Tensor([self.px, self.py, self.vx, self.vy, self.radius])
 
 
 class ObservableState:
@@ -100,8 +120,6 @@ class ObservableState:
 class JointState(object):
     def __init__(self, robot_state, human_states):
         assert isinstance(robot_state, FullState)
-        for human_state in human_states:
-            assert isinstance(human_state, ObservableState)
 
         self.robot_state = robot_state
         self.human_states = human_states
@@ -110,7 +128,7 @@ class JointState(object):
         robot_state_tensor = self.robot_state.to_tensor()
 
         human_states_tensor = torch.stack(
-            [human_state.to_tensor() for human_state in self.human_states]
+            [human_state for human_state in self.human_states]
         )
 
         return robot_state_tensor.unsqueeze(0), human_states_tensor.unsqueeze(0)
@@ -132,12 +150,14 @@ def tensor_to_joint_state(state):
         robot_state[8],
     )
     human_states = [
-        ObservableState(
-            human_state[0],
-            human_state[1],
-            human_state[2],
-            human_state[3],
-            human_state[4],
+        torch.Tensor(
+            [
+                human_state[0],
+                human_state[1],
+                human_state[2],
+                human_state[3],
+                human_state[4],
+            ]
         )
         for human_state in human_states.squeeze(0)
     ]

@@ -1,5 +1,5 @@
 import numpy as np
-import socialforce
+from third_party import socialforce
 from third_party.crowd_sim.envs.policy.policy import Policy
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
