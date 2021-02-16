@@ -54,7 +54,7 @@ make run
 
 ## Testing
 ```bash
-    PY_IGNORE_IMPORTMISMATCH=1 pytest -s --doctest-modules --ignore="third_party"
+PY_IGNORE_IMPORTMISMATCH=1 pytest -s --doctest-modules --ignore="third_party"
 ```
 
 ## TODO

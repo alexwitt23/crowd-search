@@ -1,0 +1,3 @@
+third_party/python_rvo2/dist
+third_party/python_rvo2/build
+third_party/python_rvo2/*.egg*

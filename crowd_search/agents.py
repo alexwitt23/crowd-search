@@ -91,15 +91,6 @@ class Agent:
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
 
-
-class Human(Agent):
-    """Human class. Check the config.yaml for the parameters that control a human."""
-
-    def __init__(self, human_cfg: Dict[str, Any]) -> None:
-        super().__init__()
-        self.radius = human_cfg.get("radius")
-        self.preferred_velocity = human_cfg.get("preferred-velocity")
-
     def set_state(
         self,
         position_x: float,
@@ -124,6 +115,15 @@ class Human(Agent):
                 self.preferred_velocity,
             ]
         )
+
+
+class Human(Agent):
+    """Human class. Check the config.yaml for the parameters that control a human."""
+
+    def __init__(self, human_cfg: Dict[str, Any]) -> None:
+        super().__init__()
+        self.radius = human_cfg.get("radius")
+        self.preferred_velocity = human_cfg.get("preferred-velocity")
 
     def get_radius(self) -> float:
         return self.radius
@@ -146,30 +146,6 @@ class Robot(Agent):
     def get_preferred_velocity(self) -> float:
         return self.preferred_velocity
 
-    def set_state(
-        self,
-        position_x: float,
-        position_y: float,
-        velocity_x: float,
-        velocity_y: float,
-        goal_position_x: float,
-        goal_position_y: float,
-        direction: float,
-    ) -> None:
-        """Set the state tensor which has all the information about this agent."""
-        self.state_tensor = torch.Tensor(
-            [
-                position_x,
-                position_y,
-                velocity_x,
-                velocity_y,
-                goal_position_x,
-                goal_position_y,
-                direction,
-                self.radius,
-                self.preferred_velocity,
-            ]
-        )
 
     def compute_position(
         self, action: agent_actions.ActionXY, time_step: float

@@ -9,5 +9,15 @@ image:
 
 .PHONY: run
 run:
-	docker run --ipc=host --gpus all -ti --rm -v $PWD:/home/code -u $(id -u):$(id -g) \
+	docker run --ipc=host --gpus all -ti --rm -v $(PWD):/home/code -u $(id -u):$(id -g) \
     	crowd-search:latest /bin/bash
+
+.PHONY: test
+test:
+	docker build -t crowd-search-test:test -f Dockerfile $(DOCKERFLAGS) .
+	docker run --ipc=host --gpus all --rm -v $(PWD):/home/code -u $(id -u):$(id -g) \
+		crowd-search:latest /bin/bash pytest -s --doctest-modules --ignore="third_party"
+
+.PHONY: clean
+clean:
+	docker image -rmi crowd-search-test:test
