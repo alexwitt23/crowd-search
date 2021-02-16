@@ -3,7 +3,6 @@
 from typing import Any, Dict, List
 
 import torch
-import numpy as np
 import rvo2
 
 from crowd_search import agents
@@ -32,7 +31,7 @@ class ORCA:
         self.sim = None
 
     def predict(
-        self, human_states: List[agents.Human], robot_states: List[agents.Human],
+        self, human_states, robot_states,
     ):
         """Create a rvo2 simulation at each time step and run one step
         Python-RVO2 API: https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/rvo2.pyx

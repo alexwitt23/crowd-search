@@ -126,6 +126,7 @@ class ValueNet(nn.Module):
         self.value_net = MLP([state_dim] + net_dims)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        
         return self.value_net(x)
 
 

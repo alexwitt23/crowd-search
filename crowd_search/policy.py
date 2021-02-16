@@ -3,13 +3,11 @@
 import random
 from typing import Dict
 
-import torch
 import numpy as np
-from torch.distributed import rpc
+import torch
 
 from crowd_search import models
-from third_party.crowd_sim.envs.utils.agent_actions import ActionRot, ActionXY
-from third_party.crowd_sim.envs.utils.state import tensor_to_joint_state
+from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
@@ -20,6 +18,7 @@ class CrowdSearchPolicy:
         robot_cfg: Dict,
         human_cfg: Dict,
         incentive_cfg: Dict,
+        action_space_cfg: Dict,
         device: torch.device,
     ) -> None:
         super().__init__()
@@ -27,8 +26,10 @@ class CrowdSearchPolicy:
         self.human_radius = human_cfg.get("radius")
         self.robot_radius = robot_cfg.get("radius")
         self.incentives = incentive_cfg.copy()
-
+        self.discomfort_distance = incentive_cfg.get("discomfort-distance")
+        self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
         self.device = device
+
         # Build the models.
         gnn_cfg = models_cfg.get("gnn")
         self.gnn = models.GNN(
@@ -38,34 +39,30 @@ class CrowdSearchPolicy:
             num_attention_layers=gnn_cfg.get("gnn-layers"),
         )
         self.gnn.to(device=device)
+        self.gnn.train()
 
         value_net_cfg = models_cfg.get("value-net")
         self.value_estimator = models.ValueNet(
             value_net_cfg.get("channel-depth"), value_net_cfg.get("net-dims")
         )
         self.value_estimator.to(self.device)
+        self.value_estimator.train()
 
         state_net_cfg = models_cfg.get("state-net")
         self.state_estimator = models.StateNet(
             state_net_cfg.get("time-step"), state_net_cfg.get("channel-depth")
         )
         self.state_estimator.to(device)
+        self.state_estimator.train()
 
         self.time_step = state_net_cfg.get("time-step")
 
         self.phase = "train"
-        self.epsilon = 0.0
+        self.epsilon = 0.5
         self.action_space = None
-        self.kinematics = "holonomic"
-        self.speed_samples = 5
-        self.rotation_samples = 4
-        self.sampling = "exponential"
-        self.query_env = False
-        self.rotation_constraint = np.pi / 3
-        self.action_group_index = []
-        self.sparse_speed_samples = 2
-        self.sparse_rotation_samples = 8
-        self.do_action_clip = False
+
+        self.speed_samples = action_space_cfg.get("speed-samples")
+        self.rotation_samples = action_space_cfg.get("rotation-samples")
         self.planning_depth = 1
         self.planning_width = 1
         self.gamma = 0.9
@@ -112,8 +109,6 @@ class CrowdSearchPolicy:
             robot_state: Tensor containing robot state. Comes in with size [1, 9]
             human_states: Tensor containing human states. Comes in with size [Num_humans, 5]
         """
-        # if self.reach_destination(state):
-        #    return ActionXY(0, 0) if self.kinematics == "holonomic" else ActionRot(0, 0)
         if self.action_space is None:
             self.build_action_space(self.v_pref)
 
@@ -129,7 +124,6 @@ class CrowdSearchPolicy:
             # convolutions.
             robot_state = robot_state.unsqueeze(0).transpose(1, 2).to(self.device)
             human_states = human_states.unsqueeze(0).transpose(1, 2).to(self.device)
-
             # Get the embedding of the current robot and human states.
             state_embed = self.gnn(robot_state, human_states)
             # Given an known action from our potential actions space, estimate the state that
@@ -139,13 +133,9 @@ class CrowdSearchPolicy:
                 # Get next robot state and predicted human states given the action.
                 next_robot_state, next_human_states = self.state_estimator(
                     robot_state=robot_state,
-                    human_state_embed=state_embed[0],
+                    human_state_embed=state_embed[1],
                     action=action,
                 )
-
-                # TODO(alex): Since planning_depth is 1 right now, the V_planning just
-                # performs a gnn embedding of the next state and returns the value of
-                # being in that state.
                 max_next_return, max_next_traj = self.V_planning(
                     next_robot_state, next_human_states, 2, self.planning_width,
                 )
@@ -160,7 +150,7 @@ class CrowdSearchPolicy:
 
             if max_action is None:
                 raise ValueError("Value network is not well trained.")
-
+            
         if self.phase == "train":
             self.last_state = (robot_state, human_states)
         else:
@@ -168,35 +158,6 @@ class CrowdSearchPolicy:
 
         return max_action
 
-    def action_clip(self, state, action_space, width, depth=1):
-        values = []
-
-        for action in action_space:
-            next_state_est = self.state_estimator(state, action)
-            next_return, _ = self.V_planning(next_state_est, depth, width)
-            reward_est = self.estimate_reward(state, action)
-            value = reward_est + self.get_normalized_gamma() * next_return
-            values.append(value)
-
-        if self.sparse_search:
-            # self.sparse_speed_samples = 2
-            # search in a sparse grained action space
-            added_groups = set()
-            max_indices = np.argsort(np.array(values))[::-1]
-            clipped_action_space = []
-            for index in max_indices:
-                if self.action_group_index[index] not in added_groups:
-                    clipped_action_space.append(action_space[index])
-                    added_groups.add(self.action_group_index[index])
-                    if len(clipped_action_space) == width:
-                        break
-        else:
-            max_indexes = np.argpartition(np.array(values), -width)[-width:]
-            clipped_action_space = [action_space[i] for i in max_indexes]
-
-        return clipped_action_space
-
-    @torch.no_grad()
     def V_planning(
         self, robot_state: torch.Tensor, human_state: torch.Tensor, depth, width
     ):
@@ -204,22 +165,15 @@ class CrowdSearchPolicy:
         defined as a list of (state, action, reward) triples
 
         """
-
         robot_state_embed, human_state_embed = self.gnn(robot_state, human_state)
         current_state_value = self.value_estimator(robot_state_embed)
-
         if depth == 1:
             return current_state_value, [((robot_state, human_state), None, None)]
-
-        # if self.do_action_clip:
-        #    action_space_clipped = self.action_clip(state, self.action_space, width)
-        # else:
-        action_space_clipped = self.action_space
 
         returns = []
         trajs = []
 
-        for action in action_space_clipped:
+        for action in self.action_space:
             next_robot_state, next_human_state = self.state_estimator(
                 robot_state, human_state_embed, action
             )
@@ -242,78 +196,50 @@ class CrowdSearchPolicy:
 
         return max_return, max_traj
 
-    @torch.no_grad()
+    # TODO(alex): Could we have this estimator be a learned model?
     def estimate_reward(
-        self, robot_state: torch.Tensor, human_states: torch.Tensor, action: ActionXY
+        self,
+        robot_state: torch.Tensor,
+        next_human_states: torch.Tensor,
+        action: ActionXY,
     ) -> float:
-        # TODO(alex): this should really be batched
-        # BCN -> BNC -> NC
+        # Squeeze out the batch since these environment explorations are always
+        # non-batched. (The batch is just for the models)
         robot_state = robot_state.transpose(1, 2).squeeze(0)
-        human_states = human_states.transpose(1, 2).squeeze(0)
+        next_human_states = next_human_states.transpose(1, 2).squeeze(0)
+        next_human_pos = next_human_states[:, :2]
 
-        dmin = float("inf")
-        collision = False
-        for i, human in enumerate(human_states):
+        # Calculate where the robot will be given an action.
+        x = robot_state[:, 0] + action.vx * self.time_step
+        y = robot_state[:, 1] + action.vx * self.time_step
+        next_robot_pos = torch.Tensor([[x, y]])  # size: [1, 2]
 
-            px = human[0] - robot_state[:, 0]
-            py = human[1] - robot_state[:, 1]
-            vx = human[2] - action.vx
-            vy = human[3] - action.vy
-            ex = px + vx * self.time_step
-            ey = py + vy * self.time_step
-            # closest distance between boundaries of two agents
-            closest_dist = (
-                point_to_segment_dist(px, py, ex, ey, 0, 0)
-                - human[4]  # radius
-                - robot_state[0, 4]  # radius
+        distances = torch.linalg.norm(
+            next_human_pos - next_robot_pos, dim=-1, keepdim=True
+        )
+
+        # If any of the distances to humans are less than the sum of their respective radii,
+        # we have a collision.
+        if (distances < self.robot_radius + self.human_radius).any():
+            return self.incentives.get("collision")
+
+        # If not collision, we want to check for discomfort levels.
+        discomfort = distances[
+            distances + self.discomfort_distance < self.robot_radius + self.human_radius
+        ]
+        if discomfort.numel():
+            return (
+                (torch.min(discomfort) - self.discomfort_distance)
+                * self.discomfort_distance_factor
+                * self.time_step
             )
-            if closest_dist < 0:
-                collision = True
-                break
-            elif closest_dist < dmin:
-                dmin = closest_dist
 
-        # check if reaching the goal
-        if self.kinematics == "holonomic":
-            px = robot_state[:, 0] + action.vx * self.time_step
-            py = robot_state[:, 1] + action.vy * self.time_step
-        else:
-            theta = robot_state.theta + action.r
-            px = robot_state.px + np.cos(theta) * action.v * self.time_step
-            py = robot_state.py + np.sin(theta) * action.v * self.time_step
-
-        start_pos = torch.Tensor([robot_state[:, 0], robot_state[:, 1]]).to(self.device)
-        end_position = torch.Tensor([px, py]).to(self.device)
-        goal_position = torch.Tensor([robot_state[:, 5], robot_state[:, 6]]).to(
+        goal_position = torch.Tensor([robot_state[:, 4], robot_state[:, 5]]).to(
             self.device
         )
-        reaching_goal = torch.norm(end_position - goal_position) < robot_state[0, 4]
-        furthur_away = torch.norm(end_position - goal_position) > torch.norm(
-            start_pos - goal_position
-        )
-        if collision:
-            reward = -0.25
-        elif reaching_goal:
-            reward = 1
-        elif dmin < 0.2:
-            # adjust the reward based on FPS
-            reward = (dmin - 0.2) * 0.5 * self.time_step
-        elif furthur_away:
-            reward = -0.01
-        else:
-            reward = 0.01
+        reaching_goal = torch.norm(next_robot_pos - goal_position) < robot_state[0, -2]
 
-        return reward
-
-    @staticmethod
-    def reach_destination(state):
-        robot_state = state.robot_state
-        if (
-            np.linalg.norm(
-                (robot_state.py - robot_state.gy, robot_state.px - robot_state.gx)
-            )
-            < robot_state.radius
-        ):
-            return True
+        if reaching_goal:
+            return 1.0
         else:
-            return False
+            return 0.0
