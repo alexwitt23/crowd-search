@@ -32,7 +32,7 @@ The docker container assumes you have a CUDA compatible GPU device. Build
 it like so:
 
 ```bash
-    docker build -t crowd-search:latest  .
+    make image
 ```
 
 You can run the docker container with the command below. Note, this will
@@ -40,8 +40,7 @@ mount the repo into `/home/code` within in the container so you can develop insi
 the container. This is where you will first load into when running.
 
 ```bash
-docker run --ipc=host --gpus all -ti --rm -v $PWD:/home/code -u $(id -u):$(id -g) \
-    crowd-search:latest /bin/bash
+make run
 ```
 
 ## Training
@@ -50,6 +49,12 @@ docker run --ipc=host --gpus all -ti --rm -v $PWD:/home/code -u $(id -u):$(id -g
 ```bash
     PYTHONPATH=. crowd_search/train_distributed.py 
     tensorboard --logdir=~/runs/crowd-search
+```
+
+
+## Testing
+```bash
+    PY_IGNORE_IMPORTMISMATCH=1 pytest -s --doctest-modules --ignore="third_party"
 ```
 
 ## TODO

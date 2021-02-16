@@ -107,6 +107,8 @@ class ORCA:
         actions = [
             agent_actions.ActionXY(*self.sim.getAgentVelocity(idx))
             for idx in range(num_agents)
-        ][len(robot_states) :]
+        ]
+        # For right now, we only have 1 robot state so this is equivalent to [1:]
+        actions = actions[len(robot_states) :]
 
         return actions

@@ -1,7 +1,9 @@
 FROM nvcr.io/nvidia/pytorch:20.12-py3
 
+ENV DEBIAN_FRONTEND noninteractive
+
 RUN apt-get update && \
-    apt-get -y install gcc && \
+    apt-get -y install gcc g++ cmake && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /setup

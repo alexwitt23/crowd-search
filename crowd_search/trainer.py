@@ -17,9 +17,9 @@ import torch
 from torch import nn
 from torch import distributed
 from torch.distributed import rpc
+from torch.nn import parallel
 from torch.utils import tensorboard
 from torch.utils import data
-from torch.nn import parallel
 
 from crowd_search import dataset
 from crowd_search import distributed_utils
@@ -196,7 +196,8 @@ class Trainer:
                 sampler=sampler,
                 drop_last=True,
             )
-            for _ in range(10):
+            for mini_epoch in range(10):
+                sampler.set_epoch(mini_epoch)
                 for idx, batch in enumerate(loader):
                     (
                         robot_states,

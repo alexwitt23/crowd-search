@@ -8,32 +8,82 @@ from third_party.crowd_sim.envs.utils import agent_actions
 class Agent:
     """A state class to house the state of both human or robots."""
 
-    def __init__(self) -> None:
+    def __init__(self, state_tensor: torch.Tensor = None) -> None:
         # [pos_x, pos_y, vel_x, vel_y, goal_x, goal_y, direction, radius, v_pref]
-        self.state_tensor = None
+        self.state_tensor = state_tensor
 
     def get_full_state(self) -> torch.Tensor:
+        """Get agent's full state. Unsqueeze to add dimension for 'agents'.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_full_state()
+            tensor([[ 0.,  1.,  2.,  3., -1., -2.,  0.,  5.,  4.]])
+        """
         return self.state_tensor.unsqueeze(0)
 
     def get_position(self) -> torch.Tensor:
+        """Get agent's position.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_position()
+            tensor([0., 1.])
+        """
         return torch.Tensor([self.state_tensor[0], self.state_tensor[1]])
 
     def get_velocity(self) -> torch.Tensor:
+        """Get agent's velocity.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_velocity()
+            tensor([2., 3.])
+        """
         return torch.Tensor([self.state_tensor[2], self.state_tensor[3]])
 
     def get_goal_position(self) -> torch.Tensor:
+        """Get goal position of the agent.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_goal_position()
+            tensor([-1., -2.])
+        """
         return torch.Tensor([self.state_tensor[4], self.state_tensor[5]])
 
     def get_radius(self) -> float:
+        """Get radius of agent.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_radius()
+            tensor(5.)
+        """
         return self.state_tensor[7]
 
     def get_preferred_velocity(self) -> float:
-        return self.state_tensor[8]
+        """Get agent's preferred velocity.
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_preferred_velocity()
+            tensor(4.)
+        """
+        return self.state_tensor[-1]
 
     def get_observable_state(self) -> torch.Tensor:
         """Return what is observable to other agents:
-        pos_x, pos_y, vel_x, vel_y, preferred_vel"""
-        return torch.Tensor(self.state_tensor[:4].tolist() + [self.state_tensor[7]])
+        pos_x, pos_y, vel_x, vel_y, radius
+        
+        TODO(alex): do we want to add direction?
+        
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
+            >>> agent.get_observable_state()
+            tensor([0., 1., 2., 3., 5.])
+        """
+        return torch.Tensor(self.state_tensor[:4].tolist() + [self.state_tensor[-2]])
 
     def step(self, action, time_step):
         self.state_tensor[0] = self.state_tensor[0] + action.vx * time_step
