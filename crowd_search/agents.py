@@ -1,7 +1,8 @@
-import abc
 from typing import Any, Dict
 
 import torch
+
+from third_party.crowd_sim.envs.utils import agent_actions
 
 
 class Agent:
@@ -12,7 +13,7 @@ class Agent:
         self.state_tensor = None
 
     def get_full_state(self) -> torch.Tensor:
-        return self.state_tensor
+        return self.state_tensor.unsqueeze(0)
 
     def get_position(self) -> torch.Tensor:
         return torch.Tensor([self.state_tensor[0], self.state_tensor[1]])
@@ -34,7 +35,9 @@ class Agent:
         pos_x, pos_y, vel_x, vel_y, preferred_vel"""
         return torch.Tensor(self.state_tensor[:4].tolist() + [self.state_tensor[7]])
 
-    def step(self, action):
+    def step(self, action, time_step):
+        self.state_tensor[0] = self.state_tensor[0] + action.vx * time_step
+        self.state_tensor[1] = self.state_tensor[0] + action.vy * time_step
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
 
@@ -56,7 +59,7 @@ class Human(Agent):
         goal_position_x: float,
         goal_position_y: float,
         direction: float,
-    ):
+    ) -> None:
         """Set the state tensor which has all the information about this agent."""
         self.state_tensor = torch.Tensor(
             [
@@ -78,13 +81,9 @@ class Human(Agent):
     def get_preferred_velocity(self) -> float:
         return self.preferred_velocity
 
-    def get_full_state(self) -> torch.Tensor:
-        return self.state_tensor.unsqueeze(0)
-
 
 class Robot(Agent):
-    """This class is very similar to the Human class execpt that we also
-    allow the robot to _act_ in the environment by giving it a policy to control."""
+    """This class is very similar to the Human class."""
 
     def __init__(self, robot_cfg: Dict) -> None:
         super().__init__()
@@ -106,7 +105,7 @@ class Robot(Agent):
         goal_position_x: float,
         goal_position_y: float,
         direction: float,
-    ):
+    ) -> None:
         """Set the state tensor which has all the information about this agent."""
         self.state_tensor = torch.Tensor(
             [
@@ -122,9 +121,17 @@ class Robot(Agent):
             ]
         )
 
-    def compute_position(self, action, delta_t: float):
-        pos = self.get_position() + torch.Tensor([action.vx, action.vy]) * delta_t
+    def compute_position(
+        self, action: agent_actions.ActionXY, time_step: float
+    ) -> torch.Tensor:
+        """Take an action (velocity vector) and timestep and return the new position."""
+        pos = self.get_position() + torch.Tensor([action.vx, action.vy]) * time_step
         return pos
 
-    def get_full_state(self) -> torch.Tensor:
-        return self.state_tensor.unsqueeze(0)
+    def step(self, action, time_step: float):
+        """Update the position and velocity."""
+        pos = self.compute_position(action, time_step)
+        self.state_tensor[0] = pos[0]
+        self.state_tensor[1] = pos[1]
+        self.state_tensor[2] = action.vx
+        self.state_tensor[3] = action.vy

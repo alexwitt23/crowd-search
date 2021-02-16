@@ -1,20 +1,15 @@
-import logging
 import random
-import math
 from typing import Dict, Union
 
-import torch
 import gym
 import numpy as np
-from numpy.linalg import norm
+import torch
 
 from crowd_search import agents
 from crowd_search import environment
 
-from third_party.crowd_sim.envs.policy.policy_factory import policy_factory
-from third_party.crowd_sim.envs.utils import agent
 from third_party.crowd_sim.envs.utils import agent_actions
-from third_party.crowd_sim.envs.utils.info import *
+from third_party.crowd_sim.envs.utils import info
 from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
@@ -84,7 +79,7 @@ class CrowdSim(gym.Env):
 
         return self_str
 
-    def _generate_human(self) -> agent.Human:
+    def _generate_human(self) -> agents.Human:
         """Generate a circular blob representing a human."""
 
         # Create initial human agent.
@@ -111,6 +106,7 @@ class CrowdSim(gym.Env):
                 # No collision, set this human state.
                 break
 
+        # TODO(alex): Do we want more complicated motion for the humans?
         human.set_state(
             position_x=px,
             position_y=py,
@@ -130,16 +126,15 @@ class CrowdSim(gym.Env):
         """
 
         self.global_time = 0
-        # TODO(alex): Set different states?
-
+        # TODO(alex): Do better state checking. Should
         self.robot.set_state(
-            position_x=-self.circle_radius,
-            position_y=0,
-            velocity_x=0,
-            velocity_y=self.circle_radius,
+            position_x=random.uniform(-1.0, 1.0),
+            position_y=random.uniform(-1.0, 1.0),
+            velocity_x=random.uniform(-1.0, 1.0),
+            velocity_y=random.uniform(-1.0, 1.0),
             goal_position_x=0,
             goal_position_y=0,
-            direction=np.pi / 2,
+            direction=random.uniform(0, 2 * np.pi),
         )
 
         # Generate the humans.
@@ -154,8 +149,7 @@ class CrowdSim(gym.Env):
 
     def step(
         self,
-        action: Union[agent_actions.ActionXY, agent_actions.ActionRot],
-        update=True,
+        action: agent_actions.ActionXY,
     ):
         """Compute actions for all agents, detect collision, update environment and return
         (ob, reward, done, info). ORCA is used to control human motion."""
@@ -174,8 +168,9 @@ class CrowdSim(gym.Env):
             ey = py + vy * self.time_step
 
             # closest distance between boundaries of two agents
+            gx, gy = self.robot.get_goal_position()
             closest_dist = (
-                point_to_segment_dist(px, py, ex, ey, 0, 0)
+                point_to_segment_dist(px, py, ex, ey, gx, gy)
                 - human.radius
                 - self.robot.get_radius()
             )
@@ -188,26 +183,24 @@ class CrowdSim(gym.Env):
         # check if reaching the goal
         previous_robot_pos = self.robot.get_position()
         end_position = self.robot.compute_position(action, self.time_step)
+
         reaching_goal = (
             torch.norm(end_position - self.robot.get_goal_position())
             < self.robot.get_radius()
         )
-        further_away = torch.norm(
-            end_position - self.robot.get_goal_position()
-        ) > torch.norm(previous_robot_pos - self.robot.get_goal_position())
 
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
-            info = Timeout()
+            action_info = info.Timeout()
         elif collision:
             reward = self.collision_penalty
             done = True
-            info = Collision()
+            action_info = info.Collision()
         elif reaching_goal:
             reward = self.success_reward
             done = True
-            info = ReachGoal()
+            action_info = info.ReachGoal()
         elif dmin < self.discomfort_dist:
             # adjust the reward based on FPS
             reward = (
@@ -216,36 +209,25 @@ class CrowdSim(gym.Env):
                 * self.time_step
             )
             done = False
-            info = Discomfort(dmin)
-        elif further_away:
-            reward = -0.01
-            done = False
-            info = Nothing()
-
+            action_info = info.Discomfort(dmin)
         else:
-            reward = 0.01
+            reward = 0.0
             done = False
-            info = Nothing()
+            action_info = info.Nothing()
 
-        if update:
 
-            # update all agents
-            self.robot.step(action)
-            for human, action in zip(self.humans, human_actions):
-                human.step(action)
-                if self.nonstop_human and human.reached_destination():
-                    self._generate_human(human)
+        # update all agents
+        self.robot.step(action, self.time_step)
+        for human, action in zip(self.humans, human_actions):
+            human.step(action, self.time_step)
+            if self.nonstop_human and human.reached_destination():
+                self._generate_human(human)
 
-            self.global_time += self.time_step
-            ob = self.collate_robot_observation()
+        self.global_time += self.time_step
+        ob = self.collate_robot_observation()
 
-        else:
-            ob = [
-                human.get_next_observable_state(action)
-                for human, action in zip(self.humans, human_actions)
-            ]
 
-        return ob, reward, done, info
+        return ob, reward, done, action_info
 
     def compute_observation_for(self, agent):
         if agent == self.robot:
@@ -268,7 +250,7 @@ class CrowdSim(gym.Env):
 
         return torch.stack([human.get_observable_state() for human in self.humans])
 
-    def collate_human_observation(self, human: agent.Human):
+    def collate_human_observation(self, human: agents.Human):
         """A human's observations are the robots and other humans if they are
         visible."""
         other_humans = [

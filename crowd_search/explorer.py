@@ -1,7 +1,5 @@
 """Explorer objects which maintain a copy of the environment."""
 
-import copy
-import time
 from typing import Dict, List
 
 import gym
@@ -10,9 +8,6 @@ from torch.distributed import rpc
 
 from crowd_search import agents
 from crowd_search import policy
-from third_party.crowd_sim.envs import crowd_sim
-from third_party.crowd_sim.envs.utils import agent
-from third_party.crowd_sim.envs.utils import info
 
 
 class Explorer:
@@ -42,6 +37,7 @@ class Explorer:
             cfg.get("robot"),
             cfg.get("human"),
             cfg.get("incentives"),
+            cfg.get("action-space"),
             "cpu",
         )
         self.history = []
@@ -59,6 +55,7 @@ class Explorer:
         been recieved."""
         self.history.clear()
 
+    @torch.no_grad()
     def run_episode(self):
         """Run a single episode of the crowd search game.
         
@@ -70,14 +67,14 @@ class Explorer:
         # self.robot.policy.set_phase(phase)
 
         # Keep track of the various social aspects of the robot's navigation
-        success = collision = timeout = discomfort = 0
-        cumulative_rewards = []
-        average_returns = []
-        success_times = []
-        collision_cases = []
-        collision_times = []
-        timeout_cases = []
-        timeout_times = []
+        # success = collision = timeout = discomfort = 0
+        # cumulative_rewards = []
+        # average_returns = []
+        # success_times = []
+        # collision_cases = []
+        # collision_times = []
+        # timeout_cases = []
+        # timeout_times = []
 
         # Reset the environment at the beginning of each episode.
         observation = self.environment.reset(phase)
@@ -86,8 +83,8 @@ class Explorer:
         goal_reached = False
         while not goal_reached:
             robot_state = self.environment.robot.get_full_state()
-            action = self.policy.predict(robot_state, observation)
 
+            action = self.policy.predict(robot_state, observation)
             observation, reward, goal_reached, socal_info = self.environment.step(
                 action
             )
@@ -131,6 +128,10 @@ class Explorer:
         """Pass in a dictionary of model_state_dicts that will be used to
         update this Explorer's local copies."""
         self.policy.gnn.load_state_dict(models["gnn"])
+        self.policy.gnn.eval()
         self.policy.value_estimator.load_state_dict(models["value_estimator"])
+        self.policy.value_estimator.eval()
         self.policy.state_estimator.load_state_dict(models["state_estimator"])
+        self.policy.state_estimator.eval()
         print("updated models")
+        self.policy.epsilon *= 0.8

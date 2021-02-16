@@ -40,11 +40,25 @@ mount the repo into `/home/code` within in the container so you can develop insi
 the container. This is where you will first load into when running.
 
 ```bash
-docker run --ipc=host --gpus all -ti --rm -v $PWD:/home/code -u $(id -u):$(id -g) crowd-search:latest /bin/bash
+docker run --ipc=host --gpus all -ti --rm -v $PWD:/home/code -u $(id -u):$(id -g) \
+    crowd-search:latest /bin/bash
 ```
 
 ## Training
 
+
 ```bash
     PYTHONPATH=. crowd_search/train_distributed.py 
+    tensorboard --logdir=~/runs/crowd-search
 ```
+
+## TODO
+
+- [ ] Make one central module / functions for rewards. Right now rewards are split
+between simulation environments and policies.
+
+- [ ] Visualizations of simulations
+
+- [ ] Look to use socialforce human model
+
+- [ ] Look to use ideas from MuZero's MCTS

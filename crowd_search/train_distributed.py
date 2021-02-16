@@ -2,21 +2,15 @@
 
 import argparse
 import datetime
-import time
 import pathlib
-import os
 
-import gym
 import torch
-from torch import distributed
 from torch.distributed import rpc
+from torch import distributed
 from torch import multiprocessing
 import yaml
 
-from crowd_search import config
-from crowd_search import policy
 from crowd_search import trainer
-from third_party.crowd_sim.envs.utils import agent
 
 _LOG_DIR = pathlib.Path("~/runs/crowd-search").expanduser()
 
@@ -65,7 +59,7 @@ def train(
         for learner_rank in range(num_learners)
     }
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions(
-        init_method="tcp://localhost:29501", rpc_timeout=240
+        init_method="tcp://localhost:29501", rpc_timeout=2400
     )
 
     if not is_explorer:
@@ -91,6 +85,7 @@ def train(
             rank=local_rank,
             run_dir=_LOG_DIR
             / datetime.datetime.now().isoformat().split(".")[0].replace(":", "."),
+            batch_size=cfg["training"]["batch-size"]
         )
         trainer_node.continous_train()
     else:

@@ -13,13 +13,13 @@ training:
   # The number separate processes for exploring the environment _per learner node_.
   num-explorers: 8
   # The batch size on one training node (a.k.a the same for all trainers)
-  batch-size: 20
+  batch-size: 60
 
 
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 30
+  time-limit: 5
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
@@ -91,18 +91,18 @@ robot:
 
 # D-step planning used to predict value of potential states. These parameters
 # define the space to sample for values.
-d-step-planning:
+action-space:
   # Define the kinematics equations used to update the position.
   kinematics: "holonomic"
   # The number of different speed samples to consider.
   speed-samples: 5
   # The number of rotation samples to consider.
-  rotation-samples: 16
+  rotation-samples: 8
 
 # Define the various models used during training.
 models:
   # Social graph neural network.
-  gnn-output-depth: &output-dim 64
+  gnn-output-depth: &output-dim 32
   gnn: 
     # The dimension of the robot's state. The 9 values are:
     # [pos_x, pos_y, vel_x, vel_y, direction,
@@ -115,7 +115,7 @@ models:
     # The last dimension here is used as the node channel depth in the graph network.
     mlp-layer-channels: [32, *output-dim]
     # The number of layers in the graph model.
-    gnn-layers: 2
+    gnn-layers: 4
   
   state-net:
     time-step: *time_step
@@ -123,6 +123,6 @@ models:
 
   value-net:
     channel-depth: *output-dim
-    net-dims: [64, 64, 1]
+    net-dims: [*output-dim, *output-dim, *output-dim, 1]
 
 # TODO(alex): Add optimizer type
