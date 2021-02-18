@@ -49,6 +49,8 @@ def train(
         torch.cuda.set_device(local_rank)
         is_explorer = False
         device = torch.device(f"cuda:{local_rank}")
+    elif not use_cuda and local_rank < num_learners:
+        is_explorer = False
 
     train_cfg = cfg.get("training")
     num_learners = train_cfg.get("num-learners")

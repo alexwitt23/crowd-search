@@ -146,9 +146,13 @@ class Explorer:
 
         # Turn the observation history into two tensors by stacking the robot
         # and human states
-        robot_states = torch.stack([state[0] for state in game_history.observation_history])
-        human_states = torch.stack([state[1] for state in game_history.observation_history])
-        game_history.observation_history = (robot_states, human_states)
+        # robot_states = torch.stack(
+        #    [state[0] for state in game_history.observation_history]
+        # )
+        # human_states = torch.stack(
+        #    [state[1] for state in game_history.observation_history]
+        # )
+        # game_history.observation_history = (robot_states, human_states)
 
         return game_history
 
@@ -252,13 +256,9 @@ class MCTS:
         else:
             root = Node(0)
 
-            robot_states = [state[0] for state in observation]
-            human_states = [state[1] for state in observation]
-
-            # Concatenate through the previous samples along the number of agents
-            # dimension
-            robot_states = torch.cat(robot_states, dim=0).unsqueeze(0)
-            human_states = torch.cat(human_states, dim=0).unsqueeze(0)
+            # Add batch dimension to robot and human state tensors.
+            robot_states = observation[0].unsqueeze(0)
+            human_states = observation[1].unsqueeze(0)
 
             (
                 root_predicted_value,
@@ -266,6 +266,7 @@ class MCTS:
                 policy_logits,
                 hidden_state,
             ) = policy.initial_inference(robot_states, human_states)
+
             root_predicted_value = policy2.support_to_scalar(
                 root_predicted_value, self.config["support-size"]
             ).item()
@@ -316,6 +317,7 @@ class MCTS:
                 parent.hidden_state,
                 torch.tensor([[action]]).to(parent.hidden_state.device),
             )
+            print("EXPLORER", value.shape, reward.shape, policy_logits.shape, hidden_state.shape)
             value = policy2.support_to_scalar(value, self.config["support-size"]).item()
             reward = policy2.support_to_scalar(
                 reward, self.config["support-size"]
@@ -506,25 +508,42 @@ class GameHistory:
         # Convert to positive index. i.e. -1 % 2 = 1. So we'd start at index 1 and
         # go back from there.
         index = index % len(self.observation_history)
-        stacked_observations = [copy.deepcopy(self.observation_history[index])]
+        # This stacked_observations is a tuple of stacked robot state tensors
+        # and human state tensors.
+        stacked_observations = copy.deepcopy(self.observation_history[index])
 
+        # Loop over the observation history and retrieve, or pad with the previous
+        # history.
+        previous_observations = []
         for past_observation_index in range(
             index - 1, index - num_stacked_observations, -1
         ):
             if 0 <= past_observation_index:
-                previous_observation = (
-                    self.observation_history[past_observation_index][0],
-                    self.observation_history[past_observation_index][1],
+                previous_observations.append(
+                    (
+                        self.observation_history[past_observation_index][0],
+                        self.observation_history[past_observation_index][1],
+                    )
                 )
             else:
-                previous_observation = (
-                    torch.zeros_like(self.observation_history[index][0]),
-                    torch.zeros_like(self.observation_history[index][1]),
+                previous_observations.append(
+                    (
+                        torch.zeros_like(stacked_observations[0]),
+                        torch.zeros_like(stacked_observations[1]),
+                    )
                 )
 
-            stacked_observations.append(previous_observation)
+        # Now stack all the previous observation tensors.
+        robot_states = torch.stack([state[0] for state in previous_observations])
+        human_states = torch.stack([state[1] for state in previous_observations])
+        stacked_observations_r = torch.cat(
+            [stacked_observations[0].unsqueeze(0), robot_states]
+        )
+        stacked_observations_h = torch.cat(
+            [stacked_observations[1].unsqueeze(0), human_states]
+        )
 
-        return stacked_observations
+        return (stacked_observations_r, stacked_observations_h)
 
 
 class MinMaxStats:

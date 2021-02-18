@@ -68,6 +68,13 @@ class CrowdSearchPolicy:
             32, self.full_support_size
         )
 
+    def parameters(self):
+        params = list(self.gnn.parameters())
+        params += list(self.action_predictor.parameters())
+        params += list(self.dynamics_encoded_state_network.parameters())
+        params += list(self.dynamics_reward_network.parameters())
+        return params
+
     def get_action_space_size(self) -> int:
         return len(self.action_space)
 
@@ -109,14 +116,21 @@ class CrowdSearchPolicy:
     def initial_inference(self, robot_state: torch.Tensor, human_states: torch.Tensor):
         """
         Args:
-            robot_state: Tensor containing robot state. Comes in with size [1, 9]
-            human_states: Tensor containing human states. Comes in with size [Num_humans, 5]
+            robot_state: Tensor containing robot state. Comes in with size:
+                [batch, num_previous_frames, num_robots, 9]
+            human_states: Tensor containing human states. Comes in with size:
+                [batch, num_previous_frames, num_robots, 5]
         """
-
+        batch_size, *_, robot_dim = robot_state.shape
+        *_, human_dim = human_states.shape
         # Unsqeeze to add batch dim and BNC -> BCN. Since all our layers are
         # convolutional tensor format.
-        robot_state = robot_state.transpose(1, 2).to(self.device)
-        human_states = human_states.transpose(1, 2).to(self.device)
+        robot_state = (
+            robot_state.view(batch_size, -1, robot_dim).transpose(1, 2).to(self.device)
+        )
+        human_states = (
+            human_states.view(batch_size, -1, human_dim).transpose(1, 2).to(self.device)
+        )
         # Get the embedding of the current robot and human states.
         encoded_state = self.gnn(robot_state, human_states)
         # encoded_state = encoded_state.view(1, -1, 1)
@@ -176,7 +190,6 @@ class CrowdSearchPolicy:
         return next_encoded_state, reward
 
     def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
-
         next_encoded_state, reward = self.dynamics(encoded_state, action)
         policy_logits, value = self.action_predictor.forward(next_encoded_state)
         return value, reward, policy_logits, next_encoded_state
@@ -204,3 +217,25 @@ def support_to_scalar(action_logits, support_size):
         - 1
     )
     return x
+
+def scalar_to_support(x, support_size):
+    """
+    Transform a scalar to a categorical representation with (2 * support_size + 1) categories
+    See paper appendix Network Architecture
+    """
+    # Reduce the scale (defined in https://arxiv.org/abs/1805.11593)
+    x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+
+    # Encode on a vector
+    x = torch.clamp(x, -support_size, support_size)
+    floor = x.floor()
+    prob = x - floor
+    logits = torch.zeros(x.shape[0], x.shape[1], 2 * support_size + 1).to(x.device)
+    logits.scatter_(
+        2, (floor + support_size).long().unsqueeze(-1), (1 - prob).unsqueeze(-1)
+    )
+    indexes = floor + support_size + 1
+    prob = prob.masked_fill_(2 * support_size < indexes, 0.0)
+    indexes = indexes.masked_fill_(2 * support_size < indexes, 0.0)
+    logits.scatter_(2, indexes.long().unsqueeze(-1), prob.unsqueeze(-1))
+    return logits
