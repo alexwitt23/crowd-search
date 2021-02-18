@@ -119,6 +119,46 @@ class GNN(nn.Module):
         return robot_state, human_state
 
 
+class GNNCombined(nn.Module):
+    def __init__(
+        self,
+        robot_state_dim: int,
+        human_state_dim: int,
+        attn_layer_channels: List[int] = [32, 32],
+        num_attention_layers: int = 1,
+    ) -> None:
+        """This model creates an encoded state based on the accumulated robot and
+        human states.
+        """
+        super().__init__()
+
+        # These MLPs expand the robot/human state dimension into a common size.
+        self.robot_mlp = MLP([robot_state_dim] + attn_layer_channels)
+        self.human_mlp = MLP([human_state_dim] + attn_layer_channels)
+
+        self.attn_layers = nn.ModuleList(
+            [
+                AttentionalPropagation(attn_layer_channels[-1], 4)
+                for _ in range(num_attention_layers)
+            ]
+        )
+
+    def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
+
+        robot_state = self.robot_mlp(robot_state)
+        human_state = self.human_mlp(human_state)
+
+        # Concatenate the state tensors together
+        combined_state = torch.cat([robot_state, human_state], dim=-1)
+
+        for layer in self.attn_layers:
+            robot_state = layer(robot_state, human_state)
+
+        embedded_state = torch.cat([robot_state, human_state], dim=-1)
+
+        return embedded_state
+
+
 class ValueNet(nn.Module):
     def __init__(self, state_dim: int, net_dims: List[int]) -> None:
         super().__init__()
@@ -126,7 +166,7 @@ class ValueNet(nn.Module):
         self.value_net = MLP([state_dim] + net_dims)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        
+
         return self.value_net(x)
 
 
@@ -174,3 +214,44 @@ class StateNet(nn.Module):
         next_state[:, 3] = action.vy
 
         return next_state
+
+
+# Similar to:
+# https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L390
+class PredictionNetwork(nn.Module):
+    def __init__(self, action_space_size: int, input_state_dim: int) -> None:
+        super().__init__()
+        self.action_predictor = MLP(
+            [
+                input_state_dim,
+                2 * input_state_dim,
+                2 * input_state_dim,
+                action_space_size,
+            ]
+        )
+        self.value_estimator = MLP(
+            [input_state_dim, 2 * input_state_dim, 2 * input_state_dim, 601,]
+        )
+
+    def forward(
+        self, embedded_state: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        policy_logits = self.action_predictor(embedded_state)
+        value = self.value_estimator(embedded_state)
+
+        return policy_logits.max(-1).values, value.max(-1).values
+
+
+# Similar to:
+# https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
+class DynamicsNetwork(torch.nn.Module):
+    def __init__(
+        self, num_channels, full_support_size,
+    ):
+        super().__init__()
+        self.fc = MLP([num_channels, full_support_size])
+
+    def forward(self, x):
+        """Takes in a concatenated state embedding and action logits"""
+        return self.fc(x)

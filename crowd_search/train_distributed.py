@@ -85,7 +85,7 @@ def train(
             rank=local_rank,
             run_dir=_LOG_DIR
             / datetime.datetime.now().isoformat().split(".")[0].replace(":", "."),
-            batch_size=cfg["training"]["batch-size"]
+            batch_size=cfg["training"]["batch-size"],
         )
         trainer_node.continous_train()
     else:

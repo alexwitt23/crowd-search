@@ -148,8 +148,7 @@ class CrowdSim(gym.Env):
         return robot_observation
 
     def step(
-        self,
-        action: agent_actions.ActionXY,
+        self, action: agent_actions.ActionXY,
     ):
         """Compute actions for all agents, detect collision, update environment and return
         (ob, reward, done, info). ORCA is used to control human motion."""
@@ -215,7 +214,6 @@ class CrowdSim(gym.Env):
             done = False
             action_info = info.Nothing()
 
-
         # update all agents
         self.robot.step(action, self.time_step)
         for human, action in zip(self.humans, human_actions):
@@ -226,8 +224,7 @@ class CrowdSim(gym.Env):
         self.global_time += self.time_step
         ob = self.collate_robot_observation()
 
-
-        return ob, reward, done, action_info
+        return ob, reward, done
 
     def compute_observation_for(self, agent):
         if agent == self.robot:
@@ -257,3 +254,6 @@ class CrowdSim(gym.Env):
             human2.get_observable_state() for human2 in self.humans if human2 != human
         ]
         return other_humans + self.robot.get_observable_state()
+
+    def legal_actions(self):
+        return list(range(41))

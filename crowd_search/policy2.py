@@ -1,0 +1,206 @@
+"""Describe the policy that governs the robot's decisions."""
+
+import random
+from typing import Dict, Tuple
+
+import numpy as np
+import torch
+
+from crowd_search import models
+from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
+from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
+
+
+class CrowdSearchPolicy:
+    def __init__(
+        self,
+        models_cfg: Dict,
+        robot_cfg: Dict,
+        human_cfg: Dict,
+        incentive_cfg: Dict,
+        action_space_cfg: Dict,
+        device: torch.device,
+    ) -> None:
+        super().__init__()
+
+        self.human_radius = human_cfg.get("radius")
+        self.robot_radius = robot_cfg.get("radius")
+        self.incentives = incentive_cfg.copy()
+        self.discomfort_distance = incentive_cfg.get("discomfort-distance")
+        self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
+        self.device = device
+
+        # Build the models.
+        gnn_cfg = models_cfg.get("gnn")
+        self.gnn = models.GNNCombined(
+            gnn_cfg.get("robot-state-dimension"),
+            gnn_cfg.get("human-state-dimension"),
+            attn_layer_channels=gnn_cfg.get("mlp-layer-channels"),
+            num_attention_layers=gnn_cfg.get("gnn-layers"),
+        )
+        self.gnn.to(device=device)
+        self.gnn.train()
+
+        self.time_step = 0.2
+
+        self.phase = "train"
+        self.epsilon = 0.5
+        self.action_space = None
+
+        self.speed_samples = action_space_cfg.get("speed-samples")
+        self.rotation_samples = action_space_cfg.get("rotation-samples")
+
+        self.gamma = 0.9
+        self.v_pref = 1.0
+        self.build_action_space(self.v_pref)
+        self.full_support_size = 601
+        self.action_space_size = len(self.action_space)
+        # TODO(alex): replace with stacked observations
+        self.action_predictor = models.PredictionNetwork(
+            action_space_size=(self.speed_samples * self.rotation_samples) + 1,
+            input_state_dim=32,
+        )
+        self.action_predictor.to(self.device)
+        self.action_predictor.train()
+
+        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1, 32)
+        self.dynamics_reward_network = models.DynamicsNetwork(
+            32, self.full_support_size
+        )
+
+    def get_action_space_size(self) -> int:
+        return len(self.action_space)
+
+    def set_epsilon(self, epsilon):
+        self.epsilon = epsilon
+
+    def set_phase(self, phase):
+        self.phase = phase
+
+    def set_time_step(self, time_step):
+        self.time_step = time_step
+        self.state_estimator.time_step = time_step
+
+    def get_normalized_gamma(self):
+        return pow(self.gamma, self.time_step * self.v_pref)
+
+    def build_action_space(self, preferred_velocity: float):
+        """Given a desired number of speed and rotation samples, build the action
+        space available to the model."""
+
+        # Shift speeds to no 0.0 speed.
+        self.speeds = np.linspace(
+            0, preferred_velocity, self.speed_samples, endpoint=False
+        )
+        self.speeds += self.speeds[1]
+        self.rotations = np.linspace(
+            0, 2 * np.pi, self.rotation_samples, endpoint=False
+        )
+
+        # Add a stop action.
+        self.action_space = [ActionXY(0, 0)]
+
+        for speed in self.speeds:
+            for rotation in self.rotations:
+                self.action_space.append(
+                    ActionXY(speed * np.cos(rotation), speed * np.sin(rotation))
+                )
+
+    def initial_inference(self, robot_state: torch.Tensor, human_states: torch.Tensor):
+        """
+        Args:
+            robot_state: Tensor containing robot state. Comes in with size [1, 9]
+            human_states: Tensor containing human states. Comes in with size [Num_humans, 5]
+        """
+
+        # Unsqeeze to add batch dim and BNC -> BCN. Since all our layers are
+        # convolutional tensor format.
+        robot_state = robot_state.transpose(1, 2).to(self.device)
+        human_states = human_states.transpose(1, 2).to(self.device)
+        # Get the embedding of the current robot and human states.
+        encoded_state = self.gnn(robot_state, human_states)
+        # encoded_state = encoded_state.view(1, -1, 1)
+        policy_logits, value = self.action_predictor.forward(encoded_state)
+
+        reward = torch.log(
+            (
+                torch.zeros(1, self.full_support_size)
+                .scatter(1, torch.tensor([[self.full_support_size // 2]]).long(), 1.0)
+                .repeat(len(encoded_state), 1)
+                .to(encoded_state.device)
+            )
+        )
+        return value.squeeze(-1), reward, policy_logits.squeeze(-1), encoded_state
+
+    def dynamics(
+        self, encoded_state: torch.Tensor, action: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Stack encoded_state with a game specific one hot encoded action (See paper appendix Network Architecture)
+        action_one_hot = (
+            torch.ones((encoded_state.shape[0], 1, encoded_state.shape[2],))
+            .to(action.device)
+            .float()
+        )
+        action_one_hot = action[:, :, None] * action_one_hot / self.action_space_size
+        x = torch.cat((encoded_state, action_one_hot), dim=1)
+        next_encoded_state = self.dynamics_encoded_state_network(x)
+
+        reward = self.dynamics_reward_network(next_encoded_state).max(-1).values
+        """
+        print("BEFORE SCALE", next_encoded_state.shape, reward.shape)
+        # Scale encoded state between [0, 1] (See paper appendix Training)
+        min_next_encoded_state = (
+            next_encoded_state.view(
+                -1,
+                next_encoded_state.shape[1],
+                next_encoded_state.shape[2],
+            )
+            .min(2, keepdim=True)[0]
+        )
+        max_next_encoded_state = (
+            next_encoded_state.view(
+                -1,
+                next_encoded_state.shape[1],
+                next_encoded_state.shape[2],
+            )
+            .max(2, keepdim=True)[0]
+        )
+        scale_next_encoded_state = max_next_encoded_state - min_next_encoded_state
+        scale_next_encoded_state[scale_next_encoded_state < 1e-5] += 1e-5
+        next_encoded_state_normalized = (
+            next_encoded_state - min_next_encoded_state
+        ) / scale_next_encoded_state
+
+        print("AFTER SCALE", next_encoded_state_normalized.shape, reward.shape)
+        """
+        return next_encoded_state, reward
+
+    def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
+
+        next_encoded_state, reward = self.dynamics(encoded_state, action)
+        policy_logits, value = self.action_predictor.forward(next_encoded_state)
+        return value, reward, policy_logits, next_encoded_state
+
+
+def support_to_scalar(action_logits, support_size):
+    """
+    Transform a categorical representation to a scalar
+    See paper appendix Network Architecture
+    """
+    # Decode to a scalar
+    probabilities = torch.softmax(action_logits, dim=1)
+    support = (
+        torch.tensor([x for x in range(-support_size, support_size + 1)])
+        .expand(probabilities.shape)
+        .float()
+        .to(device=probabilities.device)
+    )
+    x = torch.sum(support * probabilities, dim=1, keepdim=True)
+
+    # Invert the scaling (defined in https://arxiv.org/abs/1805.11593)
+    x = torch.sign(x) * (
+        ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
+        ** 2
+        - 1
+    )
+    return x

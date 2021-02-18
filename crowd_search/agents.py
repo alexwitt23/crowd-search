@@ -146,7 +146,6 @@ class Robot(Agent):
     def get_preferred_velocity(self) -> float:
         return self.preferred_velocity
 
-
     def compute_position(
         self, action: agent_actions.ActionXY, time_step: float
     ) -> torch.Tensor:

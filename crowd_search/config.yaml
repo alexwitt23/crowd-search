@@ -9,9 +9,9 @@ time-step: &time_step 0.25
 training:
   # The number of learning nodes should be <= the GPU count unless you're
   # doing all CPU training.
-  num-learners: 2
+  num-learners: 1
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 8
+  num-explorers: 1
   # The batch size on one training node (a.k.a the same for all trainers)
   batch-size: 60
 
@@ -19,7 +19,7 @@ training:
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 5
+  time-limit: 30
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?

@@ -112,6 +112,9 @@ class CrowdSearchPolicy:
         if self.action_space is None:
             self.build_action_space(self.v_pref)
 
+        if self.reached_goal(robot_state):
+            return ActionXY(0, 0)
+
         # Select random action ocassionally
         if self.phase == "train" and np.random.uniform() < self.epsilon:
             max_action = random.choice(self.action_space)
@@ -150,7 +153,7 @@ class CrowdSearchPolicy:
 
             if max_action is None:
                 raise ValueError("Value network is not well trained.")
-            
+
         if self.phase == "train":
             self.last_state = (robot_state, human_states)
         else:
@@ -243,3 +246,13 @@ class CrowdSearchPolicy:
             return 1.0
         else:
             return 0.0
+
+    def reached_goal(self, robot_state: torch.Tensor) -> bool:
+        """Return if the robot is within radius of its goal."""
+
+        distance_to_goal = torch.norm(
+            torch.cat([robot_state[:, 0], robot_state[:, 1]])
+            - torch.cat([robot_state[:, 4], robot_state[:, 5]])
+        )
+
+        return distance_to_goal < robot_state[:, -2]
