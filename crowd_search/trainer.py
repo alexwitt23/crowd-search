@@ -27,6 +27,7 @@ from crowd_search import distributed_utils
 from crowd_search import explorer
 from crowd_search import policy
 from crowd_search import policy2
+from crowd_search import shared_storage
 
 
 class Trainer:
@@ -40,6 +41,7 @@ class Trainer:
         rank: int,
         run_dir: pathlib.Path,
         batch_size: int,
+        storage_node: int
     ) -> None:
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
@@ -47,15 +49,13 @@ class Trainer:
         self.device = device
         self.num_learners = num_learners
         self.batch_size = batch_size
-
         self.run_dir = run_dir
         run_dir.mkdir(parents=True, exist_ok=True)
 
         # If main node, create a logger
         self.is_main = False
         if rank == 0:
-            global logger
-            logger = tensorboard.SummaryWriter(run_dir)
+            self.logger = tensorboard.SummaryWriter(run_dir)
             self.is_main = True
 
         # Create the policy
@@ -107,29 +107,45 @@ class Trainer:
         self.dataset = dataset.Dataset()
         self.explorer_references = []
 
+        storage_info = rpc.get_worker_info(f"Storage:{storage_node}")
+        self.storage_node = rpc.remote(
+            storage_info, shared_storage.SharedStorage
+        )
+
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
             self.explorer_references.append(
-                rpc.remote(explorer_info, explorer.Explorer, args=(cfg,),)
+                rpc.remote(explorer_info, explorer.Explorer, args=(cfg, self.storage_node))
             )
+        self.global_step = 0
+
+        self._send_policy()
+
+        # Send the explorers off to explore.
+        self._collate_explorations()
+        self._get_history()
+        
+    def _send_policy(self):
+        self.storage_node.rpc_sync().update_policy(self.policy)
+
+    def _get_history(self):
+        new_history = []
+        while not new_history:
+            new_history = self.storage_node.rpc_sync().get_history()
+
+        self.dataset.transitions.extend(new_history)
+        average_rewards = [numpy.mean(history.reward_history) for history in new_history]
+        if self.is_main:
+            self.logger.add_scalar("explorer/avg_reward", numpy.mean(average_rewards), self.global_step)
+
 
     def _collate_explorations(self):
         """Call out to all the explorer nodes and pass the policy so new
         observations can be made."""
         futures = []
         for explorer_rref in self.explorer_references:
-            futures.append(explorer_rref.rpc_async().run_episode())
+            futures.append(explorer_rref.rpc_async().run_continuous_episode())
 
-        explorer_histories = torch.futures.wait_all(futures)
-        self.dataset.transitions.extend(explorer_histories)
-
-        # Clear out the explorer history.
-        futures = []
-        for explorer_rref in self.explorer_references:
-            futures.append(explorer_rref.rpc_async().clear_history())
-
-        torch.futures.wait_all(futures)
-        distributed.barrier()
 
     def combine_dataset(self, histories) -> None:
         """This function sends the new history data from the explorers to all training
@@ -192,10 +208,8 @@ class Trainer:
         weights."""
         # self.broadcast_models()
         # Wait for the first round of explorations to come back from explorers.
-        global_step = 0
         for epoch in range(self.epochs):
             # Update memory from explorer workers
-            self._collate_explorations()
             print(f"Starting epoch {epoch}.")
             sampler = data.distributed.DistributedSampler(self.dataset, shuffle=True)
             loader = data.DataLoader(
@@ -233,16 +247,7 @@ class Trainer:
                     target_reward = target_reward.to(self.device)
                     target_policy = target_policy.to(self.device)
                     gradient_scale_batch = gradient_scale_batch.to(self.device)
-                    print("TRAIN",
-                        robot_state_batch.shape,
-                        human_state_batch.shape,
-                        action_batch.shape,
-                        target_value.shape,
-                        target_reward.shape,
-                        target_policy.shape,
-                        weight_batch.shape,
-                        gradient_scale_batch.shape,
-                    )
+
                     # observation_batch: batch, channels, height, width
                     # action_batch: batch, num_unroll_steps+1, 1 (unsqueeze)
                     # target_value: batch, num_unroll_steps+1
@@ -361,7 +366,6 @@ class Trainer:
                     )
                     if self.config["PER"]:
                         # Correct PER bias by using importance-sampling (IS) weights
-                        print(loss.shape, weight_batch.shape)
                         loss *= weight_batch.squeeze(-1)
                     # Mean over batch dimension (pseudocode do a sum)
                     loss = loss.mean()
@@ -372,16 +376,23 @@ class Trainer:
                     self.optimizer.step()
                     self.training_step += 1
 
-                    print(loss)
-                    return (
-                        priorities,
-                        # For log purpose
-                        loss.item(),
-                        value_loss.mean().item(),
-                        reward_loss.mean().item(),
-                        policy_loss.mean().item(),
-                    )
+                    if self.is_main:
+                        self.logger.add_scalar("loss/total_loss", loss.item(), self.global_step)
+                        self.logger.add_scalar("loss/value_loss", value_loss.mean().item(), self.global_step)
+                        self.logger.add_scalar("loss/reward_loss", reward_loss.mean().item(), self.global_step)
+                        self.logger.add_scalar("loss/policy_loss", policy_loss.mean().item(), self.global_step)
+                    #return (
+                    #    priorities,
+                    #    # For log purpose
+                    #    loss.item(),
+                    #    value_loss.mean().item(),
+                    #    reward_loss.mean().item(),
+                    #    policy_loss.mean().item(),
+                    #)
+                    self.global_step += 1
 
+            self._get_history()
+            self._send_policy()
     @staticmethod
     def loss_function(
         value, reward, policy_logits, target_value, target_reward, target_policy,

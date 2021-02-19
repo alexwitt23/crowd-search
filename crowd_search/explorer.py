@@ -14,7 +14,7 @@ from crowd_search import policy2
 
 
 class Explorer:
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg, storage_node) -> None:
         """Initialize Explorer.
 
         Args:
@@ -58,6 +58,16 @@ class Explorer:
             "PER-alpha": True,
         }
         self.history = []
+        self.storage_node = storage_node
+        self.policy = None
+        self._update_policy()
+
+    def _update_policy(self):
+        new_policy = None
+        while new_policy is None:
+            new_policy = self.storage_node.rpc_sync().get_policy()
+        self.policy = new_policy
+
 
     def get_history_len(self):
         """Helper function to return length of the history currently held."""
@@ -73,62 +83,66 @@ class Explorer:
         self.history.clear()
 
     @torch.no_grad()
-    def run_episode(self):
+    def run_continuous_episode(self):
         """Run a single episode of the crowd search game."""
 
-        states, actions, rewards = [], [], []
-        simulation_done = False
+        while True:
+            states, actions, rewards = [], [], []
+            simulation_done = False
 
-        # Reset the environment at the beginning of each episode and add initial
-        # information to replay memory.
-        game_history = GameHistory()
-        observation = self.environment.reset("train")
-        robot_state = self.environment.robot.get_full_state()
-        game_history.observation_history.append((robot_state, observation))
-        game_history.reward_history.append(0)
-        game_history.action_history.append(0)
+            # Reset the environment at the beginning of each episode and add initial
+            # information to replay memory.
+            game_history = GameHistory()
+            observation = self.environment.reset("train")
+            robot_state = self.environment.robot.get_full_state()
+            game_history.observation_history.append((robot_state, observation))
+            game_history.reward_history.append(0)
+            game_history.action_history.append(0)
 
-        # Loop over simulation steps until we are done. The simulation terminates
-        # when the goal is reached or some timeout based on the number of steps.
-        while not simulation_done:
+            # Loop over simulation steps until we are done. The simulation terminates
+            # when the goal is reached or some timeout based on the number of steps.
+            while not simulation_done:
 
-            stacked_observations = game_history.get_stacked_observations(
-                -1, self.config["stacked-observations"],
-            )
+                stacked_observations = game_history.get_stacked_observations(
+                    -1, self.config["stacked-observations"],
+                )
 
-            root, mcts_info = MCTS(self.config).run(
-                self.policy,
-                stacked_observations,
-                self.environment.legal_actions(),
-                0,
-                True,
-            )
-            temperature_threshold = None
-            temperature = 0
-            action = self.select_action(
-                root,
-                temperature
-                if not temperature_threshold
-                or len(game_history.action_history) < temperature_threshold
-                else 0,
-            )
-            observation, reward, simulation_done = self.environment.step(
-                self.policy.action_space[action]
-            )
+                root, mcts_info = MCTS(self.config).run(
+                    self.policy,
+                    stacked_observations,
+                    self.environment.legal_actions(),
+                    0,
+                    True,
+                )
+                temperature_threshold = None
+                temperature = 0
+                action = self.select_action(
+                    root,
+                    temperature
+                    if not temperature_threshold
+                    or len(game_history.action_history) < temperature_threshold
+                    else 0,
+                )
+                observation, reward, simulation_done = self.environment.step(
+                    self.policy.action_space[action]
+                )
 
-            game_history.store_search_statistics(root, self.config["action-space"])
-            game_history.observation_history.append(
-                (self.environment.robot.get_full_state(), observation)
-            )
-            game_history.reward_history.append(reward)
-            game_history.action_history.append(action)
-            game_history.to_play_history.append(0)
+                game_history.store_search_statistics(root, self.config["action-space"])
+                game_history.observation_history.append(
+                    (self.environment.robot.get_full_state(), observation)
+                )
+                game_history.reward_history.append(reward)
+                game_history.action_history.append(action)
+                game_history.to_play_history.append(0)
 
-        print("DONE")
+            history = self._process_epoch(game_history)
+            self.send_history(history)
+            self._update_policy()
+    
+    def send_history(self, history):
+        self.storage_node.rpc_sync().upload_history(history)
+        self.clear_history()
 
-        history = self._process_epoch(game_history)
-
-        return history
 
     def _process_epoch(self, game_history) -> None:
 
@@ -143,16 +157,6 @@ class Explorer:
 
         game_history.priorities = numpy.array(priorities, dtype="float32")
         game_history.game_priority = numpy.max(game_history.priorities)
-
-        # Turn the observation history into two tensors by stacking the robot
-        # and human states
-        # robot_states = torch.stack(
-        #    [state[0] for state in game_history.observation_history]
-        # )
-        # human_states = torch.stack(
-        #    [state[1] for state in game_history.observation_history]
-        # )
-        # game_history.observation_history = (robot_states, human_states)
 
         return game_history
 
@@ -189,18 +193,6 @@ class Explorer:
             ) * self.config["discount"] ** i
 
         return value
-
-    def update_models(self, models: Dict[str, torch.Tensor]) -> None:
-        """Pass in a dictionary of model_state_dicts that will be used to
-        update this Explorer's local copies."""
-        self.policy.gnn.load_state_dict(models["gnn"])
-        self.policy.gnn.eval()
-        self.policy.value_estimator.load_state_dict(models["value_estimator"])
-        self.policy.value_estimator.eval()
-        self.policy.state_estimator.load_state_dict(models["state_estimator"])
-        self.policy.state_estimator.eval()
-        print("updated models")
-        self.policy.epsilon *= 0.99
 
     @staticmethod
     def select_action(node, temperature):
@@ -317,7 +309,6 @@ class MCTS:
                 parent.hidden_state,
                 torch.tensor([[action]]).to(parent.hidden_state.device),
             )
-            print("EXPLORER", value.shape, reward.shape, policy_logits.shape, hidden_state.shape)
             value = policy2.support_to_scalar(value, self.config["support-size"]).item()
             reward = policy2.support_to_scalar(
                 reward, self.config["support-size"]

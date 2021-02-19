@@ -11,7 +11,7 @@ training:
   # doing all CPU training.
   num-learners: 1
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 2
+  num-explorers: 1
   # The batch size on one training node (a.k.a the same for all trainers)
   batch-size: 60
 
