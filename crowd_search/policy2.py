@@ -109,14 +109,14 @@ class CrowdSearchPolicy(nn.Module):
         encoded_state = self.gnn(robot_state, human_states)
         # encoded_state = encoded_state.view(1, -1, 1)
         policy_logits, value = self.action_predictor.forward(encoded_state)
-
         reward = (
             torch.zeros(1, self.full_support_size)
             .scatter(1, torch.tensor([[self.full_support_size // 2]]).long(), 1.0)
             .repeat(len(encoded_state), 1)
             .to(encoded_state.device)
         )
-        return value.squeeze(-1), reward, policy_logits.squeeze(-1), encoded_state
+        print(value.shape, reward.shape, policy_logits.shape, encoded_state.shape)
+        return value, reward, policy_logits, encoded_state
 
     def dynamics(
         self, encoded_state: torch.Tensor, action: torch.Tensor

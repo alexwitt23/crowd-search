@@ -89,7 +89,7 @@ class GNN(nn.Module):
 
         self.attn_layers = nn.ModuleList(
             [
-                AttentionalPropagation(mlp_layer_channels[-1], 4)
+                AttentionalPropagation(mlp_layer_channels[-1] * 2, 4)
                 for _ in range(num_attention_layers)
             ]
         )
@@ -103,9 +103,9 @@ class GNN(nn.Module):
         combined_state = torch.cat([robot_state, human_state], dim=1)
 
         for layer in self.attn_layers:
-            robot_state = layer(robot_state, human_state)
+            combined_state = layer(combined_state, combined_state)
 
-        return embedded_state
+        return combined_state
 
 
 # Similar to:
@@ -128,7 +128,6 @@ class PredictionNetwork(nn.Module):
     def forward(
         self, embedded_state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
         policy_logits = self.action_predictor(embedded_state)
         value = self.value_estimator(embedded_state)
 

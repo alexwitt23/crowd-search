@@ -59,6 +59,7 @@ class Explorer:
         self.history = []
         self.storage_node = storage_node
         self._update_policy()
+        self.run_continuous_episode()
 
     def _update_policy(self):
         new_policy = None
@@ -95,7 +96,6 @@ class Explorer:
             game_history.observation_history.append((robot_state, observation))
             game_history.reward_history.append(0)
             game_history.action_history.append(0)
-
             # Loop over simulation steps until we are done. The simulation terminates
             # when the goal is reached or some timeout based on the number of steps.
             while not simulation_done:
@@ -103,7 +103,6 @@ class Explorer:
                 stacked_observations = game_history.get_stacked_observations(
                     -1, self.config["stacked-observations"],
                 )
-
                 root, mcts_info = MCTS(self.config).run(
                     self.policy,
                     stacked_observations,
@@ -250,18 +249,19 @@ class MCTS:
             # Add batch dimension to robot and human state tensors.
             robot_states = observation[0].unsqueeze(0)
             human_states = observation[1].unsqueeze(0)
-
             (
                 root_predicted_value,
                 reward,
                 policy_logits,
                 hidden_state,
             ) = policy.initial_inference(robot_states, human_states)
-
-            root_predicted_value = policy2.support_to_scalar(
+            print("YA")
+            print(self.config)
+            root_predicted_value = support_to_scalar(
                 root_predicted_value, self.config["support-size"]
             ).item()
-            reward = policy2.support_to_scalar(
+            print("NA")
+            reward = support_to_scalar(
                 reward, self.config["support-size"]
             ).item()
 
@@ -554,3 +554,28 @@ class MinMaxStats:
             # We normalize only when we have set the maximum and minimum values
             return (value - self.minimum) / (self.maximum - self.minimum)
         return value
+
+def support_to_scalar(action_logits, support_size):
+    """
+    Transform a categorical representation to a scalar
+    See paper appendix Network Architecture
+    """
+    # Decode to a scalar
+    print(support_size.shape)
+    print(action_logits.shape)
+    probabilities = torch.softmax(action_logits, dim=1)
+    support = (
+        torch.tensor([x for x in range(-support_size, support_size + 1)])
+        .expand(probabilities.shape)
+        .float()
+        .to(device=probabilities.device)
+    )
+    x = torch.sum(support * probabilities, dim=1, keepdim=True)
+
+    # Invert the scaling (defined in https://arxiv.org/abs/1805.11593)
+    x = torch.sign(x) * (
+        ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
+        ** 2
+        - 1
+    )
+    return x
