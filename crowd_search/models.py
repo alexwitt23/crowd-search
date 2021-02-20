@@ -89,7 +89,7 @@ class GNN(nn.Module):
 
         self.attn_layers = nn.ModuleList(
             [
-                AttentionalPropagation(mlp_layer_channels[-1] * 2, 4)
+                AttentionalPropagation(mlp_layer_channels[-1], 4)
                 for _ in range(num_attention_layers)
             ]
         )
@@ -98,10 +98,8 @@ class GNN(nn.Module):
 
         robot_state = self.robot_mlp(robot_state)
         human_state = self.human_mlp(human_state)
-
         # Concatenate the state tensors together
-        combined_state = torch.cat([robot_state, human_state], dim=1)
-
+        combined_state = torch.cat([robot_state, human_state], dim=-1)
         for layer in self.attn_layers:
             combined_state = layer(combined_state, combined_state)
 

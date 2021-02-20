@@ -52,14 +52,14 @@ class CrowdSearchPolicy(nn.Module):
         self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
         # TODO(alex): replace with stacked observations
         self.action_predictor = models.PredictionNetwork(
-            action_space_size=self.action_space_size, input_state_dim=32 * 2,
+            action_space_size=self.action_space_size, input_state_dim=32,
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_encoded_state_network = models.DynamicsNetwork(2 * 32 + 1, 64)
+        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1,32)
         self.dynamics_reward_network = models.DynamicsNetwork(
-            64, self.full_support_size
+            32, self.full_support_size
         )
 
     def get_action_space_size(self) -> int:
