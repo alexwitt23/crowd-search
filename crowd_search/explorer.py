@@ -255,12 +255,10 @@ class MCTS:
                 policy_logits,
                 hidden_state,
             ) = policy.initial_inference(robot_states, human_states)
-            print("YA")
-            print(self.config)
+
             root_predicted_value = support_to_scalar(
                 root_predicted_value, self.config["support-size"]
             ).item()
-            print("NA")
             reward = support_to_scalar(
                 reward, self.config["support-size"]
             ).item()
@@ -308,8 +306,8 @@ class MCTS:
                 parent.hidden_state,
                 torch.tensor([[action]]).to(parent.hidden_state.device),
             )
-            value = policy2.support_to_scalar(value, self.config["support-size"]).item()
-            reward = policy2.support_to_scalar(
+            value = support_to_scalar(value, self.config["support-size"]).item()
+            reward = support_to_scalar(
                 reward, self.config["support-size"]
             ).item()
             node.expand(
@@ -561,8 +559,6 @@ def support_to_scalar(action_logits, support_size):
     See paper appendix Network Architecture
     """
     # Decode to a scalar
-    print(support_size.shape)
-    print(action_logits.shape)
     probabilities = torch.softmax(action_logits, dim=1)
     support = (
         torch.tensor([x for x in range(-support_size, support_size + 1)])

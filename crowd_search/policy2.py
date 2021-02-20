@@ -57,9 +57,9 @@ class CrowdSearchPolicy(nn.Module):
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1, 32)
+        self.dynamics_encoded_state_network = models.DynamicsNetwork(2 * 32 + 1, 64)
         self.dynamics_reward_network = models.DynamicsNetwork(
-            32 * 2, self.full_support_size
+            64, self.full_support_size
         )
 
     def get_action_space_size(self) -> int:
@@ -115,7 +115,6 @@ class CrowdSearchPolicy(nn.Module):
             .repeat(len(encoded_state), 1)
             .to(encoded_state.device)
         )
-        print(value.shape, reward.shape, policy_logits.shape, encoded_state.shape)
         return value, reward, policy_logits, encoded_state
 
     def dynamics(
@@ -130,7 +129,6 @@ class CrowdSearchPolicy(nn.Module):
         action_one_hot = action[:, :, None] * action_one_hot / self.action_space_size
         x = torch.cat((encoded_state, action_one_hot), dim=1)
         next_encoded_state = self.dynamics_encoded_state_network(x)
-
         reward = self.dynamics_reward_network(next_encoded_state).max(-1).values
 
         # Scale encoded state between [0, 1] (See paper appendix Training)
@@ -145,7 +143,6 @@ class CrowdSearchPolicy(nn.Module):
         next_encoded_state_normalized = (
             next_encoded_state - min_next_encoded_state
         ) / scale_next_encoded_state
-
         return next_encoded_state, reward
 
     def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
@@ -160,8 +157,6 @@ def support_to_scalar(action_logits, support_size):
     See paper appendix Network Architecture
     """
     # Decode to a scalar
-    print(support_size.shape)
-    print(action_logits.shape)
     probabilities = torch.softmax(action_logits, dim=1)
     support = (
         torch.tensor([x for x in range(-support_size, support_size + 1)])
