@@ -37,8 +37,8 @@ def plot_state(robot_state: torch.Tensor, human_states: torch.Tensor):
             markersize=3,
             color="blue",
         )
-    ax.set_ylim(-10, 10)
-    ax.set_xlim(-10, 10)
+    ax.set_ylim(-3, 3)
+    ax.set_xlim(-3, 3)
     fig.canvas.draw()
     image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
@@ -48,7 +48,7 @@ def plot_state(robot_state: torch.Tensor, human_states: torch.Tensor):
 
 def plot_history(game_history, save_path: pathlib.Path):
     save_path.parent.mkdir(exist_ok=True, parents=True)
-    kwargs_write = {"fps": 10.0, "quantizer": "nq"}
+    kwargs_write = {"fps": 30.0, "quantizer": "nq"}
     imageio.mimsave(
         str(save_path),
         [

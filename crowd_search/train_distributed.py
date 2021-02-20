@@ -73,7 +73,7 @@ def train(
         # Create process to distributed model training across trainer processes.
         if num_learners > 1:
             distributed.init_process_group(
-                "gloo",
+                "nccl",
                 rank=local_rank,
                 world_size=num_learners,
                 init_method="tcp://localhost:29500",

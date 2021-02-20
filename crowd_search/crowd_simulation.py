@@ -88,8 +88,8 @@ class CrowdSim(gym.Env):
         # Generate random human attributes and make sure the blob does not
         # collide with any of the existing blobs or robot.
         while True:
-            px = random.uniform(-10.0, 10.0)
-            py = random.uniform(-10.0, 10.0)
+            px = random.uniform(-3.0, 3.0)
+            py = random.uniform(-3.0, 3.0)
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
@@ -121,12 +121,12 @@ class CrowdSim(gym.Env):
         self.global_time = 0
         # TODO(alex): Do better state checking
         self.robot.set_state(
-            position_x=random.uniform(-10, 10),
-            position_y=random.uniform(-10, 10),
+            position_x=random.uniform(-3, 3),
+            position_y=random.uniform(-3, 3),
             velocity_x=0,
             velocity_y=0,
-            goal_position_x=0,
-            goal_position_y=0,
+            goal_position_x=random.uniform(-3, 3),
+            goal_position_y=random.uniform(-3, 3),
             direction=random.uniform(0, 2 * np.pi),
         )
 

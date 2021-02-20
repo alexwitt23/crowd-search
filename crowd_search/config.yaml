@@ -11,9 +11,9 @@ training:
   # doing all CPU training.
   num-learners: 2
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 5
+  num-explorers: 8
   # The batch size on one training node (the same for all trainers)
-  batch-size: 500
+  batch-size: 50
 
 #mu-zero:
   # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
@@ -38,11 +38,11 @@ training:
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 60
+  time-limit: 120
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
-  num-humans: 25
+  num-humans: 10
   
 
 # ORCA related configurations. NOTE, this is named for human planning, but
