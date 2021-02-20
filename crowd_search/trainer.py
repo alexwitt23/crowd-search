@@ -9,8 +9,9 @@ The basic idea is the class that executes the training loops. It manages a few t
    After a couple epochs, the new policy weights are sent to the explorer nodes that _this_
    trainer node controls.
 """
-
+import copy
 import pathlib
+import time
 from typing import Dict, List
 
 import numpy
@@ -25,9 +26,9 @@ from torch.utils import data
 from crowd_search import dataset
 from crowd_search import distributed_utils
 from crowd_search import explorer
-from crowd_search import policy
 from crowd_search import policy2
 from crowd_search import shared_storage
+from crowd_search.visualization import viz
 
 
 class Trainer:
@@ -41,7 +42,7 @@ class Trainer:
         rank: int,
         run_dir: pathlib.Path,
         batch_size: int,
-        storage_node: int
+        storage_node: int,
     ) -> None:
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
@@ -67,12 +68,25 @@ class Trainer:
             cfg.get("action-space"),
             device,
         )
+        self.policy.to(self.device)
+        if num_learners > 1:
+            if torch.cuda.is_available():
+                self.policy = parallel.DistributedDataParallel(
+                    self.policy, device_ids=[rank], find_unused_parameters=True
+                )
+            else:
+                self.policy = parallel.DistributedDataParallel(
+                    self.policy, device_ids=None, find_unused_parameters=True
+                )
+
         self.config = {
             "support-size": 300,
-            "action-space": list(range(len(self.policy.action_space))),
+            "action-space": list(
+                range(len(distributed_utils.unwrap_ddp(self.policy).action_space))
+            ),
             "root-dirichlet-alpha": 0.25,
             "root-exploration-fraction": 0.25,
-            "num-simulations": 10,
+            "num-simulations": 35,
             "stacked-observations": 32,
             "pb-c-base": 19652,
             "pb-c-init": 1.25,
@@ -81,123 +95,77 @@ class Trainer:
             "td-steps": 10,
             "PER": True,
             "PER-alpha": 1,
-            "value-loss-weight": 0.25
+            "value-loss-weight": 0.25,
         }
-        # Wrap the models in the distributed data parallel class for most efficient
-        # distributed training.
-        # self.policy.gnn = parallel.DistributedDataParallel(
-        #    self.policy.gnn, device_ids=[distributed.get_rank()],
-        # )
-        # self.policy.value_estimator = parallel.DistributedDataParallel(
-        #    self.policy.value_estimator, device_ids=[distributed.get_rank()],
-        # )
-        # self.policy.state_estimator = parallel.DistributedDataParallel(
-        #    self.policy.state_estimator, device_ids=[distributed.get_rank()],
-        # )
-        # self.policy.set_epsilon(0)
 
-        self.optimizer = torch.optim.AdamW(
-            self.policy.parameters(),
-            lr=1.0e-3,
-        )
+        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=1.0e-3)
         self.training_step = 0
-        self.l2 = nn.MSELoss()
-        self.l1 = nn.L1Loss()
 
         self.dataset = dataset.Dataset()
         self.explorer_references = []
 
         storage_info = rpc.get_worker_info(f"Storage:{storage_node}")
-        self.storage_node = rpc.remote(
-            storage_info, shared_storage.SharedStorage
-        )
+        self.storage_node = rpc.remote(storage_info, shared_storage.SharedStorage)
 
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
             self.explorer_references.append(
-                rpc.remote(explorer_info, explorer.Explorer, args=(cfg, self.storage_node))
+                rpc.remote(
+                    explorer_info, explorer.Explorer, args=(cfg, self.storage_node)
+                )
             )
         self.global_step = 0
 
+        # Update explorers with initial policy weights
         self._send_policy()
-
-        # Send the explorers off to explore.
-        self._collate_explorations()
         self._get_history()
-        
+
     def _send_policy(self):
-        self.storage_node.rpc_sync().update_policy(self.policy)
+        model = copy.deepcopy(distributed_utils.unwrap_ddp(self.policy))
+        model.to("cpu")
+        self.storage_node.rpc_sync().update_policy(model)
 
     def _get_history(self):
         new_history = []
         while not new_history:
             new_history = self.storage_node.rpc_sync().get_history()
+            time.sleep(1.0)
 
-        self.dataset.transitions.extend(new_history)
-        average_rewards = [numpy.mean(history.reward_history) for history in new_history]
+        self.storage_node.rpc_sync().clear_history()
+        self._combine_datasets(new_history)
+
+        average_rewards = [
+            numpy.mean(history.reward_history) for history in new_history
+        ]
+        max_rewards = [numpy.max(history.reward_history) for history in new_history]
         if self.is_main:
-            self.logger.add_scalar("explorer/avg_reward", numpy.mean(average_rewards), self.global_step)
-
-
-    def _collate_explorations(self):
-        """Call out to all the explorer nodes and pass the policy so new
-        observations can be made."""
-        futures = []
-        for explorer_rref in self.explorer_references:
-            futures.append(explorer_rref.rpc_async().run_continuous_episode())
-
-
-    def combine_dataset(self, histories) -> None:
-        """This function sends the new history data from the explorers to all training
-        nodes so traing batching is efficient as possible. Since the trainer nodes are
-        on their own distributed process group, we don't have to worry about specifying
-        one here."""
-        output = [None] * self.num_learners
-        distributed.all_gather_object(output, histories)
-        histories = []
-        for history in output:
-            histories.extend(history)
-
-        return histories
-
-    def broadcast_models(self) -> None:
-        """Send the newly trained models out to the trainer nodes."""
-
-        gnn = {
-            name: weight.cpu()
-            for name, weight in distributed_utils.unwrap_ddp(self.policy.gnn)
-            .state_dict()
-            .items()
-        }
-        state_est = {
-            name: weight.cpu()
-            for name, weight in distributed_utils.unwrap_ddp(
-                self.policy.state_estimator
+            self.logger.add_scalar(
+                "explorer/avg_reward", numpy.mean(average_rewards), self.global_step
             )
-            .state_dict()
-            .items()
-        }
-        value_est = {
-            name: weight.cpu()
-            for name, weight in distributed_utils.unwrap_ddp(
-                self.policy.value_estimator
-            )
-            .state_dict()
-            .items()
-        }
-        futures = []
-        for explorer_rref in self.explorer_references:
-            futures.append(
-                explorer_rref.rpc_async().update_models(
-                    {
-                        "gnn": gnn,
-                        "state_estimator": state_est,
-                        "value_estimator": value_est,
-                    }
-                )
+            self.logger.add_scalar(
+                "explorer/max_reward", numpy.sum(max_rewards), self.global_step
             )
 
-        torch.futures.wait_all(futures)
+    def _combine_datasets(self, histories: List):
+        """Called after new history is acquired from local storage node. We want to
+        send all new history to each other trainer node."""
+        if distributed.is_initialized():
+            output = [None] * self.num_learners
+            distributed.all_gather_object(output, histories)
+
+            histories = []
+            for history in output:
+                histories.extend(history)
+
+        self.dataset.transitions.extend(histories)
+
+        if self.is_main:
+            viz.plot_history(
+                histories[0], self.run_dir / f"plots/{self.global_step}.gif"
+            )
+
+        if len(self.dataset.transitions) > 1000:
+            self.dataset.transitions = self.dataset.transitions[-1000:]
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -206,12 +174,16 @@ class Trainer:
         Periodically, a trainer will look out to the explorer nodes for new data. At
         this point, our trainer will also send the explorer a copy of the latest model
         weights."""
-        # self.broadcast_models()
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
             # Update memory from explorer workers
             print(f"Starting epoch {epoch}.")
-            sampler = data.distributed.DistributedSampler(self.dataset, shuffle=True)
+            if self.num_learners > 1:
+                sampler = data.distributed.DistributedSampler(
+                    self.dataset, shuffle=True
+                )
+            else:
+                sampler = data.RandomSampler(self.dataset)
             loader = data.DataLoader(
                 self.dataset,
                 batch_size=self.batch_size,
@@ -221,7 +193,8 @@ class Trainer:
                 collate_fn=dataset.collate,
             )
             for mini_epoch in range(10):
-                sampler.set_epoch(mini_epoch)
+                if hasattr(sampler, "set_epoch"):
+                    sampler.set_epoch(mini_epoch)
                 for idx, batch in enumerate(loader):
                     (
                         robot_state_batch,
@@ -270,7 +243,9 @@ class Trainer:
                         reward,
                         policy_logits,
                         hidden_state,
-                    ) = self.policy.initial_inference(robot_state_batch, human_state_batch)
+                    ) = distributed_utils.unwrap_ddp(self.policy).initial_inference(
+                        robot_state_batch, human_state_batch
+                    )
                     predictions = [(value, reward, policy_logits)]
                     for i in range(1, action_batch.shape[1]):
                         (
@@ -278,7 +253,9 @@ class Trainer:
                             reward,
                             policy_logits,
                             hidden_state,
-                        ) = self.policy.recurrent_inference(
+                        ) = distributed_utils.unwrap_ddp(
+                            self.policy
+                        ).recurrent_inference(
                             hidden_state, action_batch[:, i].unsqueeze(-1)
                         )
 
@@ -347,7 +324,9 @@ class Trainer:
 
                         # Compute priorities for the prioritized replay (See paper appendix Training)
                         pred_value_scalar = (
-                            policy2.support_to_scalar(value, self.config["support-size"])
+                            policy2.support_to_scalar(
+                                value, self.config["support-size"]
+                            )
                             .detach()
                             .cpu()
                             .numpy()
@@ -377,22 +356,37 @@ class Trainer:
                     self.training_step += 1
 
                     if self.is_main:
-                        self.logger.add_scalar("loss/total_loss", loss.item(), self.global_step)
-                        self.logger.add_scalar("loss/value_loss", value_loss.mean().item(), self.global_step)
-                        self.logger.add_scalar("loss/reward_loss", reward_loss.mean().item(), self.global_step)
-                        self.logger.add_scalar("loss/policy_loss", policy_loss.mean().item(), self.global_step)
-                    #return (
-                    #    priorities,
-                    #    # For log purpose
-                    #    loss.item(),
-                    #    value_loss.mean().item(),
-                    #    reward_loss.mean().item(),
-                    #    policy_loss.mean().item(),
-                    #)
+                        self.logger.add_scalar(
+                            "loss/total_loss", loss.item(), self.global_step
+                        )
+                        self.logger.add_scalar(
+                            "loss/value_loss",
+                            value_loss.mean().item(),
+                            self.global_step,
+                        )
+                        self.logger.add_scalar(
+                            "loss/reward_loss",
+                            reward_loss.mean().item(),
+                            self.global_step,
+                        )
+                        self.logger.add_scalar(
+                            "loss/policy_loss",
+                            policy_loss.mean().item(),
+                            self.global_step,
+                        )
+
+                        log_str = f"global_step={self.global_step}. "
+                        log_str += f"total_loss={loss.item():.5f}. "
+                        log_str += f"value_loss={value_loss.mean().item():.5f}. "
+                        log_str += f"reward_loss={reward_loss.mean().item():.5f}. "
+                        log_str += f"policy_loss={policy_loss.mean().item():.5f}."
+                        print(log_str)
+
                     self.global_step += 1
 
             self._get_history()
             self._send_policy()
+
     @staticmethod
     def loss_function(
         value, reward, policy_logits, target_value, target_reward, target_policy,

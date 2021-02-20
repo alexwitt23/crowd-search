@@ -87,7 +87,7 @@ class Agent:
 
     def step(self, action, time_step):
         self.state_tensor[0] = self.state_tensor[0] + action.vx * time_step
-        self.state_tensor[1] = self.state_tensor[0] + action.vy * time_step
+        self.state_tensor[1] = self.state_tensor[1] + action.vy * time_step
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
 

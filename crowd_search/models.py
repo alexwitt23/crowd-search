@@ -74,71 +74,22 @@ class GNN(nn.Module):
         self,
         robot_state_dim: int,
         human_state_dim: int,
-        attn_layer_channels: List[int] = [32, 32],
+        mlp_layer_channels: List[int] = [32, 32],
         num_attention_layers: int = 1,
     ) -> None:
-        """Initialize graph model.
-
-        Args:
-            robot_state_dim: Typically 9 for
-                [pos_x, pos_y, v_x, v_y, radius, goal_x, goal_y, angle, v_preferred]
-            human_state_dim: 5 for [pos_x, pos_y, v_x, v_y, angle] TODO(alex): angle?
-        
-        """
+        """This model creates an encoded representation of the robot and human states.
+        First, the robot and human state tensors are passed through an MLP which
+        expands the tensors into the same channel dimension. Then the two states are
+        concatenated into one and passed through a GNN."""
         super().__init__()
 
         # These MLPs expand the robot/human state dimension into a common size.
-        self.robot_mlp = MLP([robot_state_dim] + attn_layer_channels)
-        self.human_mlp = MLP([human_state_dim] + attn_layer_channels)
-
-        self.robot_layers = nn.ModuleList(
-            [
-                AttentionalPropagation(attn_layer_channels[-1], 4)
-                for _ in range(num_attention_layers)
-            ]
-        )
-        self.human_layers = nn.ModuleList(
-            [
-                AttentionalPropagation(attn_layer_channels[-1], 4)
-                for _ in range(num_attention_layers)
-            ]
-        )
-
-    def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
-
-        robot_state = self.robot_mlp(robot_state)
-        human_state = self.human_mlp(human_state)
-
-        robot_state = robot_state
-        human_state = human_state
-
-        for robot_layer, human_layer in zip(self.robot_layers, self.human_layers):
-            robot_state = robot_layer(robot_state, human_state)
-            human_state = human_layer(human_state, human_state)
-
-        return robot_state, human_state
-
-
-class GNNCombined(nn.Module):
-    def __init__(
-        self,
-        robot_state_dim: int,
-        human_state_dim: int,
-        attn_layer_channels: List[int] = [32, 32],
-        num_attention_layers: int = 1,
-    ) -> None:
-        """This model creates an encoded state based on the accumulated robot and
-        human states.
-        """
-        super().__init__()
-
-        # These MLPs expand the robot/human state dimension into a common size.
-        self.robot_mlp = MLP([robot_state_dim] + attn_layer_channels)
-        self.human_mlp = MLP([human_state_dim] + attn_layer_channels)
+        self.robot_mlp = MLP([robot_state_dim] + mlp_layer_channels)
+        self.human_mlp = MLP([human_state_dim] + mlp_layer_channels)
 
         self.attn_layers = nn.ModuleList(
             [
-                AttentionalPropagation(attn_layer_channels[-1], 4)
+                AttentionalPropagation(mlp_layer_channels[-1], 4)
                 for _ in range(num_attention_layers)
             ]
         )
@@ -149,71 +100,12 @@ class GNNCombined(nn.Module):
         human_state = self.human_mlp(human_state)
 
         # Concatenate the state tensors together
-        combined_state = torch.cat([robot_state, human_state], dim=-1)
+        combined_state = torch.cat([robot_state, human_state], dim=1)
 
         for layer in self.attn_layers:
             robot_state = layer(robot_state, human_state)
 
-        embedded_state = torch.cat([robot_state, human_state], dim=-1)
-
         return embedded_state
-
-
-class ValueNet(nn.Module):
-    def __init__(self, state_dim: int, net_dims: List[int]) -> None:
-        super().__init__()
-
-        self.value_net = MLP([state_dim] + net_dims)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-
-        return self.value_net(x)
-
-
-class StateNet(nn.Module):
-    """A model to predict the next state given the GNN's encoded state.
-    Here, state is 5 terms: (pos_x, pos_y, v_x, v_y, direction)."""
-
-    def __init__(self, time_step: float, state_dim: int) -> None:
-        super().__init__()
-        self.time_step = time_step
-        self.motion_predictor = MLP([state_dim, 5])
-
-    def forward(
-        self,
-        robot_state: torch.Tensor,
-        human_state_embed: torch.Tensor,
-        action: agent_actions.ActionXY,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Forward function which computes the next robot state using linear
-        position update from velocity and the timestep and uses a MLP to predict
-        the position of the humans."""
-
-        next_robot_state = self._compute_next_state(robot_state, action)
-
-        # Predict the motion of the humans from the embedded space.
-        # TODO(alex): Shouldn't the human motion predictor consider the state
-        # of the robot?
-        next_human_states = self.motion_predictor(human_state_embed)
-
-        return next_robot_state, next_human_states
-
-    def _compute_next_state(
-        self, robot_state: torch.Tensor, action: agent_actions.ActionXY
-    ) -> torch.Tensor:
-        """Take robot action and update it's position and velocity."""
-        if action is None:
-            return robot_state
-
-        # px, py, vx, vy, radius, gx, gy, v_pref, theta
-        next_state = robot_state.clone()
-
-        next_state[:, 0] = next_state[:, 0] + action.vx * self.time_step
-        next_state[:, 1] = next_state[:, 1] + action.vy * self.time_step
-        next_state[:, 2] = action.vx
-        next_state[:, 3] = action.vy
-
-        return next_state
 
 
 # Similar to:

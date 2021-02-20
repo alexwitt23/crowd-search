@@ -99,7 +99,7 @@ class ORCA:
                 # Get the positional difference between the agent and its goal.
                 velocity = agent_state.get_goal_position() - agent_state.get_position()
                 speed = torch.norm(velocity)
-                velocity = velocity / speed if speed > 1 else velocity
+                velocity = velocity / speed
                 self.sim.setAgentPrefVelocity(idx, tuple(velocity.tolist()))
 
         # Setp the simulation and extract the human agent actions.

@@ -9,13 +9,12 @@ import torch
 from torch.distributed import rpc
 
 from crowd_search import agents
-from crowd_search import policy
 from crowd_search import policy2
 
 
 class Explorer:
     def __init__(self, cfg, storage_node) -> None:
-        """Initialize Explorer.
+        """Initialize Explorer.z
 
         Args:
             environment: The simulation environment to be explored.
@@ -59,15 +58,13 @@ class Explorer:
         }
         self.history = []
         self.storage_node = storage_node
-        self.policy = None
         self._update_policy()
 
     def _update_policy(self):
         new_policy = None
         while new_policy is None:
             new_policy = self.storage_node.rpc_sync().get_policy()
-        self.policy = new_policy
-
+        self.policy.load_state_dict(new_policy.state_dict())
 
     def get_history_len(self):
         """Helper function to return length of the history currently held."""
@@ -129,20 +126,22 @@ class Explorer:
 
                 game_history.store_search_statistics(root, self.config["action-space"])
                 game_history.observation_history.append(
-                    (self.environment.robot.get_full_state(), observation)
+                    (
+                        copy.deepcopy(self.environment.robot.get_full_state()),
+                        copy.deepcopy(observation),
+                    )
                 )
-                game_history.reward_history.append(reward)
-                game_history.action_history.append(action)
+                game_history.reward_history.append(copy.deepcopy(reward))
+                game_history.action_history.append(copy.deepcopy(action))
                 game_history.to_play_history.append(0)
 
             history = self._process_epoch(game_history)
             self.send_history(history)
             self._update_policy()
-    
+
     def send_history(self, history):
         self.storage_node.rpc_sync().upload_history(history)
         self.clear_history()
-
 
     def _process_epoch(self, game_history) -> None:
 

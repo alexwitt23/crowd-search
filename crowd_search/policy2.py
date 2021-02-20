@@ -1,17 +1,19 @@
 """Describe the policy that governs the robot's decisions."""
 
+import copy
 import random
 from typing import Dict, Tuple
 
 import numpy as np
 import torch
+from torch import nn
 
 from crowd_search import models
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
-class CrowdSearchPolicy:
+class CrowdSearchPolicy(nn.Module):
     def __init__(
         self,
         models_cfg: Dict,
@@ -30,66 +32,38 @@ class CrowdSearchPolicy:
         self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
         self.device = device
 
-        # Build the models.
+        # Build the different models.
         gnn_cfg = models_cfg.get("gnn")
-        self.gnn = models.GNNCombined(
+        self.gnn = models.GNN(
             gnn_cfg.get("robot-state-dimension"),
             gnn_cfg.get("human-state-dimension"),
-            attn_layer_channels=gnn_cfg.get("mlp-layer-channels"),
+            mlp_layer_channels=gnn_cfg.get("mlp-layer-channels"),
             num_attention_layers=gnn_cfg.get("gnn-layers"),
         )
         self.gnn.to(device=device)
         self.gnn.train()
 
-        self.time_step = 0.2
-
-        self.phase = "train"
-        self.epsilon = 0.5
-        self.action_space = None
-
         self.speed_samples = action_space_cfg.get("speed-samples")
         self.rotation_samples = action_space_cfg.get("rotation-samples")
 
-        self.gamma = 0.9
         self.v_pref = 1.0
         self.build_action_space(self.v_pref)
         self.full_support_size = 601
-        self.action_space_size = len(self.action_space)
+        self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
         # TODO(alex): replace with stacked observations
         self.action_predictor = models.PredictionNetwork(
-            action_space_size=(self.speed_samples * self.rotation_samples) + 1,
-            input_state_dim=32,
+            action_space_size=self.action_space_size, input_state_dim=32 * 2,
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
         self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1, 32)
         self.dynamics_reward_network = models.DynamicsNetwork(
-            32, self.full_support_size
+            32 * 2, self.full_support_size
         )
-
-    def parameters(self):
-        params = list(self.gnn.parameters())
-        params += list(self.action_predictor.parameters())
-        params += list(self.dynamics_encoded_state_network.parameters())
-        params += list(self.dynamics_reward_network.parameters())
-        return params
 
     def get_action_space_size(self) -> int:
         return len(self.action_space)
-
-    def set_epsilon(self, epsilon):
-        self.epsilon = epsilon
-
-    def set_phase(self, phase):
-        self.phase = phase
-
-    def set_time_step(self, time_step):
-        self.time_step = time_step
-        self.state_estimator.time_step = time_step
-
-    def get_normalized_gamma(self):
-        return pow(self.gamma, self.time_step * self.v_pref)
 
     def build_action_space(self, preferred_velocity: float):
         """Given a desired number of speed and rotation samples, build the action
@@ -136,13 +110,11 @@ class CrowdSearchPolicy:
         # encoded_state = encoded_state.view(1, -1, 1)
         policy_logits, value = self.action_predictor.forward(encoded_state)
 
-        reward = torch.log(
-            (
-                torch.zeros(1, self.full_support_size)
-                .scatter(1, torch.tensor([[self.full_support_size // 2]]).long(), 1.0)
-                .repeat(len(encoded_state), 1)
-                .to(encoded_state.device)
-            )
+        reward = (
+            torch.zeros(1, self.full_support_size)
+            .scatter(1, torch.tensor([[self.full_support_size // 2]]).long(), 1.0)
+            .repeat(len(encoded_state), 1)
+            .to(encoded_state.device)
         )
         return value.squeeze(-1), reward, policy_logits.squeeze(-1), encoded_state
 
@@ -160,33 +132,20 @@ class CrowdSearchPolicy:
         next_encoded_state = self.dynamics_encoded_state_network(x)
 
         reward = self.dynamics_reward_network(next_encoded_state).max(-1).values
-        """
-        print("BEFORE SCALE", next_encoded_state.shape, reward.shape)
+
         # Scale encoded state between [0, 1] (See paper appendix Training)
-        min_next_encoded_state = (
-            next_encoded_state.view(
-                -1,
-                next_encoded_state.shape[1],
-                next_encoded_state.shape[2],
-            )
-            .min(2, keepdim=True)[0]
-        )
-        max_next_encoded_state = (
-            next_encoded_state.view(
-                -1,
-                next_encoded_state.shape[1],
-                next_encoded_state.shape[2],
-            )
-            .max(2, keepdim=True)[0]
-        )
+        min_next_encoded_state = next_encoded_state.view(
+            -1, next_encoded_state.shape[1], next_encoded_state.shape[2],
+        ).min(2, keepdim=True)[0]
+        max_next_encoded_state = next_encoded_state.view(
+            -1, next_encoded_state.shape[1], next_encoded_state.shape[2],
+        ).max(2, keepdim=True)[0]
         scale_next_encoded_state = max_next_encoded_state - min_next_encoded_state
         scale_next_encoded_state[scale_next_encoded_state < 1e-5] += 1e-5
         next_encoded_state_normalized = (
             next_encoded_state - min_next_encoded_state
         ) / scale_next_encoded_state
 
-        print("AFTER SCALE", next_encoded_state_normalized.shape, reward.shape)
-        """
         return next_encoded_state, reward
 
     def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
@@ -201,6 +160,8 @@ def support_to_scalar(action_logits, support_size):
     See paper appendix Network Architecture
     """
     # Decode to a scalar
+    print(support_size.shape)
+    print(action_logits.shape)
     probabilities = torch.softmax(action_logits, dim=1)
     support = (
         torch.tensor([x for x in range(-support_size, support_size + 1)])
@@ -217,6 +178,7 @@ def support_to_scalar(action_logits, support_size):
         - 1
     )
     return x
+
 
 def scalar_to_support(x, support_size):
     """

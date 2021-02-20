@@ -88,13 +88,8 @@ class CrowdSim(gym.Env):
         # Generate random human attributes and make sure the blob does not
         # collide with any of the existing blobs or robot.
         while True:
-            angle = np.random.random() * np.pi * 2
-            # add some noise to simulate all the possible cases robot could meet with human
-            px_noise = (np.random.random() - 0.5) * human.get_preferred_velocity()
-            py_noise = (np.random.random() - 0.5) * human.get_preferred_velocity()
-            px = self.circle_radius * np.cos(angle) + px_noise
-            py = self.circle_radius * np.sin(angle) + py_noise
-
+            px = random.uniform(-10.0, 10.0)
+            py = random.uniform(-10.0, 10.0)
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
@@ -116,7 +111,6 @@ class CrowdSim(gym.Env):
             goal_position_y=-py,
             direction=0.0,
         )
-
         return human
 
     def reset(self, phase: str = "test") -> torch.Tensor:
@@ -124,14 +118,13 @@ class CrowdSim(gym.Env):
         
         TODO(alex) implement phases
         """
-
         self.global_time = 0
-        # TODO(alex): Do better state checking. Should
+        # TODO(alex): Do better state checking
         self.robot.set_state(
-            position_x=random.uniform(-1.0, 1.0),
-            position_y=random.uniform(-1.0, 1.0),
-            velocity_x=random.uniform(-1.0, 1.0),
-            velocity_y=random.uniform(-1.0, 1.0),
+            position_x=random.uniform(-10, 10),
+            position_y=random.uniform(-10, 10),
+            velocity_x=0,
+            velocity_y=0,
             goal_position_x=0,
             goal_position_y=0,
             direction=random.uniform(0, 2 * np.pi),
@@ -144,6 +137,7 @@ class CrowdSim(gym.Env):
 
         # Get the robot's first initial observation
         robot_observation = self.collate_robot_observation()
+        self.motion_planner.sim = None
 
         return robot_observation
 
@@ -188,6 +182,10 @@ class CrowdSim(gym.Env):
             < self.robot.get_radius()
         )
 
+        # dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
+        # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
+        # further_away = dist_to_goal_fut > dist_to_goal_now
+
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
@@ -210,12 +208,13 @@ class CrowdSim(gym.Env):
             done = False
             action_info = info.Discomfort(dmin)
         else:
-            reward = 0.0
+            reward = -0.01
             done = False
             action_info = info.Nothing()
 
         # update all agents
         self.robot.step(action, self.time_step)
+
         for human, action in zip(self.humans, human_actions):
             human.step(action, self.time_step)
             if self.nonstop_human and human.reached_destination():
