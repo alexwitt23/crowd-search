@@ -9,7 +9,7 @@ import torch
 from torch.distributed import rpc
 
 from crowd_search import agents
-from crowd_search import policy2
+from crowd_search import policy
 
 
 class Explorer:
@@ -34,7 +34,7 @@ class Explorer:
         )
 
         self.robot = agents.Robot(cfg.get("robot"))
-        self.policy = policy2.CrowdSearchPolicy(
+        self.policy = policy.CrowdSearchPolicy(
             cfg.get("models"),
             cfg.get("robot"),
             cfg.get("human"),
@@ -99,7 +99,6 @@ class Explorer:
             # Loop over simulation steps until we are done. The simulation terminates
             # when the goal is reached or some timeout based on the number of steps.
             while not simulation_done:
-
                 stacked_observations = game_history.get_stacked_observations(
                     -1, self.config["stacked-observations"],
                 )

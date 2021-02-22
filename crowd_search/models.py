@@ -17,28 +17,30 @@ from torch import nn
 from third_party.crowd_sim.envs.utils import agent_actions
 
 
-def MLP(channels: list):
+def mlp(channels: list):
     """ Multi-layer perceptron """
-    n = len(channels)
+
     layers = []
-    for i in range(1, n):
+    for i in range(1, len(channels)):
         layers.append(nn.Conv1d(channels[i - 1], channels[i], kernel_size=1, bias=True))
-        if i < (n - 1):
+        if i < (len(channels) - 1):
             layers.append(nn.ReLU())
     return nn.Sequential(*layers)
 
 
 def attention(query, key, value):
+    """Apply attention computation."""
     dim = query.shape[1]
     scores = torch.einsum("bdhn,bdhm->bhnm", query, key) / dim ** 0.5
     prob = torch.nn.functional.softmax(scores, dim=-1)
-    return torch.einsum("bhnm,bdhm->bdhn", prob, value), prob
+    return torch.einsum("bhnm,bdhm->bdhn", prob, value)
 
 
 class MultiHeadedAttention(nn.Module):
     """Multi-head attention to increase model expressivitiy."""
 
     def __init__(self, num_heads: int, d_model: int):
+        """TODO(alex): docstring"""
         super().__init__()
         assert d_model % num_heads == 0
         self.dim = d_model // num_heads
@@ -47,24 +49,31 @@ class MultiHeadedAttention(nn.Module):
         self.proj = nn.ModuleList([copy.deepcopy(self.merge) for _ in range(3)])
 
     def forward(self, query, key, value):
+        """TODO(alex): docstring"""
         batch_dim = query.size(0)
         query, key, value = [
-            l(x).view(batch_dim, self.dim, self.num_heads, -1)
-            for l, x in zip(self.proj, (query, key, value))
+            layer(tensor).view(batch_dim, self.dim, self.num_heads, -1)
+            for layer, tensor in zip(self.proj, (query, key, value))
         ]
 
-        x, _ = attention(query, key, value)
-        return self.merge(x.contiguous().view(batch_dim, self.dim * self.num_heads, -1))
+        output = attention(query, key, value)
+        return self.merge(
+            output.contiguous().view(batch_dim, self.dim * self.num_heads, -1)
+        )
 
 
 class AttentionalPropagation(nn.Module):
+    """TODO(alex): docstring"""
+
     def __init__(self, feature_dim: int, num_heads: int):
+        """TODO(alex): docstring"""
         super().__init__()
         self.attn = MultiHeadedAttention(num_heads, feature_dim)
-        self.mlp = MLP([feature_dim * 2, feature_dim * 2, feature_dim])
+        self.mlp = mlp([feature_dim * 2, feature_dim * 2, feature_dim])
         nn.init.constant_(self.mlp[-1].bias, 0.0)
 
     def forward(self, x, source):
+        """TODO(alex): docstring"""
         message = self.attn(x, source, source)
         return self.mlp(torch.cat([x, message], dim=1))
 
@@ -78,14 +87,14 @@ class GNN(nn.Module):
         num_attention_layers: int = 1,
     ) -> None:
         """This model creates an encoded representation of the robot and human states.
-        First, the robot and human state tensors are passed through an MLP which
+        First, the robot and human state tensors are passed through an mlp which
         expands the tensors into the same channel dimension. Then the two states are
         concatenated into one and passed through a GNN."""
         super().__init__()
 
-        # These MLPs expand the robot/human state dimension into a common size.
-        self.robot_mlp = MLP([robot_state_dim] + mlp_layer_channels)
-        self.human_mlp = MLP([human_state_dim] + mlp_layer_channels)
+        # These mlps expand the robot/human state dimension into a common size.
+        self.robot_mlp = mlp([robot_state_dim] + mlp_layer_channels)
+        self.human_mlp = mlp([human_state_dim] + mlp_layer_channels)
 
         self.attn_layers = nn.ModuleList(
             [
@@ -95,6 +104,7 @@ class GNN(nn.Module):
         )
 
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
+        """TODO(alex): docstring"""
 
         robot_state = self.robot_mlp(robot_state)
         human_state = self.human_mlp(human_state)
@@ -109,9 +119,12 @@ class GNN(nn.Module):
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L390
 class PredictionNetwork(nn.Module):
+    """TODO(alex): docstring"""
+
     def __init__(self, action_space_size: int, input_state_dim: int) -> None:
+        """TODO(alex): docstring"""
         super().__init__()
-        self.action_predictor = MLP(
+        self.action_predictor = mlp(
             [
                 input_state_dim,
                 2 * input_state_dim,
@@ -119,13 +132,14 @@ class PredictionNetwork(nn.Module):
                 action_space_size,
             ]
         )
-        self.value_estimator = MLP(
+        self.value_estimator = mlp(
             [input_state_dim, 2 * input_state_dim, 2 * input_state_dim, 601,]
         )
 
     def forward(
         self, embedded_state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """TODO(alex): docstring"""
         policy_logits = self.action_predictor(embedded_state)
         value = self.value_estimator(embedded_state)
 
@@ -135,12 +149,15 @@ class PredictionNetwork(nn.Module):
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
 class DynamicsNetwork(torch.nn.Module):
+    """TODO(alex): docstring"""
+
     def __init__(
         self, num_channels, full_support_size,
     ):
+        """TODO(alex): docstring"""
         super().__init__()
-        self.fc = MLP([num_channels, full_support_size])
+        self.mlp = mlp([num_channels, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""
-        return self.fc(x)
+        return self.mlp(x)

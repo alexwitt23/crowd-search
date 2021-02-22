@@ -1,7 +1,5 @@
 """Describe the policy that governs the robot's decisions."""
 
-import copy
-import random
 from typing import Dict, Tuple
 
 import numpy as np
@@ -10,10 +8,11 @@ from torch import nn
 
 from crowd_search import models
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
-from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
 class CrowdSearchPolicy(nn.Module):
+    """Describe the policy that governs the robot's decisions."""
+
     def __init__(
         self,
         models_cfg: Dict,
@@ -63,6 +62,7 @@ class CrowdSearchPolicy(nn.Module):
         )
 
     def get_action_space_size(self) -> int:
+        """Return the number of possible actions."""
         return len(self.action_space)
 
     def build_action_space(self, preferred_velocity: float):
@@ -111,7 +111,7 @@ class CrowdSearchPolicy(nn.Module):
         policy_logits, value = self.action_predictor.forward(encoded_state)
         reward = (
             torch.zeros(1, self.full_support_size)
-            .scatter(1, torch.tensor([[self.full_support_size // 2]]).long(), 1.0)
+            .scatter(1, torch.Tensor([[self.full_support_size // 2]]).long(), 1.0)
             .repeat(len(encoded_state), 1)
             .to(encoded_state.device)
         )
@@ -120,15 +120,17 @@ class CrowdSearchPolicy(nn.Module):
     def dynamics(
         self, encoded_state: torch.Tensor, action: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Stack encoded_state with a game specific one hot encoded action (See paper appendix Network Architecture)
+        """TODO(alex): Docstring"""
+        # Stack encoded_state with a game specific one hot encoded action
+        # (See paper appendix Network Architecture)
         action_one_hot = (
             torch.ones((encoded_state.shape[0], 1, encoded_state.shape[2],))
             .to(action.device)
             .float()
         )
         action_one_hot = action[:, :, None] * action_one_hot / self.action_space_size
-        x = torch.cat((encoded_state, action_one_hot), dim=1)
-        next_encoded_state = self.dynamics_encoded_state_network(x)
+        dynamics_tensor = torch.cat((encoded_state, action_one_hot), dim=1)
+        next_encoded_state = self.dynamics_encoded_state_network(dynamics_tensor)
         reward = self.dynamics_reward_network(next_encoded_state).max(-1).values
 
         # Scale encoded state between [0, 1] (See paper appendix Training)
@@ -143,12 +145,17 @@ class CrowdSearchPolicy(nn.Module):
         next_encoded_state_normalized = (
             next_encoded_state - min_next_encoded_state
         ) / scale_next_encoded_state
-        return next_encoded_state, reward
+        return next_encoded_state_normalized, reward
 
     def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
+        """TODO(alex): Docstring"""
         next_encoded_state, reward = self.dynamics(encoded_state, action)
         policy_logits, value = self.action_predictor.forward(next_encoded_state)
         return value, reward, policy_logits, next_encoded_state
+
+    def forward(self):
+        """Defined since nn.Module.forward is abstract."""
+        raise NotImplementedError
 
 
 def support_to_scalar(action_logits, support_size):
@@ -159,7 +166,7 @@ def support_to_scalar(action_logits, support_size):
     # Decode to a scalar
     probabilities = torch.softmax(action_logits, dim=1)
     support = (
-        torch.tensor([x for x in range(-support_size, support_size + 1)])
+        torch.Tensor(list(range(-support_size, support_size + 1)))
         .expand(probabilities.shape)
         .float()
         .to(device=probabilities.device)
@@ -177,8 +184,8 @@ def support_to_scalar(action_logits, support_size):
 
 def scalar_to_support(x, support_size):
     """
-    Transform a scalar to a categorical representation with (2 * support_size + 1) categories
-    See paper appendix Network Architecture
+    Transform a scalar to a categorical representation with (2 * support_size + 1)
+    categories. See paper appendix Network Architecture
     """
     # Reduce the scale (defined in https://arxiv.org/abs/1805.11593)
     x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x

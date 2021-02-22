@@ -200,5 +200,4 @@ def collate(batches):
         policy_batch,
         gradient_scale_batch,
         weight_batch,
-        weight_batch,
     )
