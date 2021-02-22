@@ -1,20 +1,21 @@
+"""This defined the OpenAI Gym game that we'll use to simulate a crowd of humans
+that our robot(s) can navigate through."""
+
 import random
-from typing import Dict, Union
+from typing import Dict
 
 import gym
-import numpy as np
 import torch
 
 from crowd_search import agents
 from crowd_search import environment
-
 from third_party.crowd_sim.envs.utils import agent_actions
 from third_party.crowd_sim.envs.utils import info
 from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
 class CrowdSim(gym.Env):
-    metadata = {"render.modes": ["human"]}
+    """Crowd simulation environment."""
 
     def __init__(
         self,
@@ -24,21 +25,22 @@ class CrowdSim(gym.Env):
         human_cfg: Dict,
         robot_cfg: Dict,
     ) -> None:
-        """
-        Movement simulation for n+1 agents
-        Agent can either be human or robot.
-        humans are controlled by a unknown and fixed policy.
-        robot is controlled by a known and learnable policy.
+        """Movement simulation for agents plus robot. The humans will be controlled by
+        some known policy like ORCA or socialforce rules. The robot learns a policy
+        to navigate through the crowd."""
 
-        """
         self.time_limit = env_cfg.get("time-limit")
         self.time_step = env_cfg.get("time-step")
         self.human_num = env_cfg.get("num-humans")
+        self.world_width = env_cfg.get("world-width") // 2
+        self.world_height = env_cfg.get("world-height") // 2
+        self.goal_location_width = env_cfg.get("goal-location-width") // 2
+        self.goal_location_height = env_cfg.get("goal-location-height") // 2
 
         self.human_cfg = human_cfg
-
+        self.humans = []
         self.robot = agents.Robot(robot_cfg)
-        self.humans = None
+        # Used to keep track of when simulation times out
         self.global_time = None
         self.robot_sensor_range = None
 
@@ -48,24 +50,9 @@ class CrowdSim(gym.Env):
         self.discomfort_dist = incentive_cfg.get("discomfort-distance")
         self.discomfort_penalty_factor = incentive_cfg.get("discomfort-penalty-factor")
 
-        # simulation configuration
-        self.config = None
-        self.case_capacity = None
-        self.case_size = None
-        self.case_counter = None
-        self.randomize_attributes = None
-        self.train_val_scenario = None
-        self.test_scenario = None
-        self.current_scenario = None
-        self.square_width = None
-        self.circle_radius = 4
-        self.nonstop_human = None
         # TODO(alex): Look into different planners. Socialforce models?
+        # TODO(alex): build a human policy factory
         self.motion_planner = environment.ORCA(motion_planner_cfg)
-
-        # for visualization
-        self.states = []
-        self.phase = None
 
     def __str__(self) -> str:
         """Print a verbal description of the simulation environment."""
@@ -85,11 +72,11 @@ class CrowdSim(gym.Env):
         # Create initial human agent.
         human = agents.Human(self.human_cfg)
 
-        # Generate random human attributes and make sure the blob does not
-        # collide with any of the existing blobs or robot.
+        # Generate random human attributes and make sure the human does not
+        # collide with any of the existing humans or robot.
         while True:
-            px = random.uniform(-3.0, 3.0)
-            py = random.uniform(-3.0, 3.0)
+            px = random.uniform(-self.world_width, self.world_width)
+            py = random.uniform(-self.world_height, self.world_height)
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
@@ -105,31 +92,33 @@ class CrowdSim(gym.Env):
         human.set_state(
             position_x=px,
             position_y=py,
-            velocity_x=0,
-            velocity_y=0,
+            velocity_x=0.0,
+            velocity_y=0.0,
             goal_position_x=-px,
             goal_position_y=-py,
             direction=0.0,
         )
         return human
 
-    def reset(self, phase: str = "test") -> torch.Tensor:
-        """Reset the simulation environment.
-        
-        TODO(alex) implement phases
-        """
+    def reset(self) -> torch.Tensor:
+        """Reset the simulation environment. Reset the global time, set a random
+        robot state, and regenerate the human agents."""
+
         self.global_time = 0
         # TODO(alex): Do better state checking
         self.robot.set_state(
-            position_x=random.uniform(-3, 3),
-            position_y=random.uniform(-3, 3),
-            velocity_x=0,
-            velocity_y=0,
-            goal_position_x=random.uniform(-3, 3),
-            goal_position_y=random.uniform(-3, 3),
-            direction=random.uniform(0, 2 * np.pi),
+            position_x=random.uniform(-self.world_width, self.world_width),
+            position_y=random.uniform(-self.world_height, self.world_height),
+            velocity_x=0.0,
+            velocity_y=0.0,
+            goal_position_x=random.uniform(
+                -self.goal_location_width, self.goal_location_width
+            ),
+            goal_position_y=random.uniform(
+                -self.goal_location_height, self.goal_location_height
+            ),
+            direction=0.0,
         )
-
         # Generate the humans.
         self.humans = []
         for _ in range(self.human_num):
@@ -137,6 +126,8 @@ class CrowdSim(gym.Env):
 
         # Get the robot's first initial observation
         robot_observation = self.collate_robot_observation()
+
+        # Reset the human motion planner simulation.
         self.motion_planner.sim = None
 
         return robot_observation
@@ -170,7 +161,7 @@ class CrowdSim(gym.Env):
             if closest_dist < 0:
                 collision = True
                 break
-            elif closest_dist < dmin:
+            if closest_dist < dmin:
                 dmin = closest_dist
 
         # check if reaching the goal
@@ -215,8 +206,8 @@ class CrowdSim(gym.Env):
         # update all agents
         self.robot.step(action, self.time_step)
 
-        for human, action in zip(self.humans, human_actions):
-            human.step(action, self.time_step)
+        for human, human_action in zip(self.humans, human_actions):
+            human.step(human_action, self.time_step)
             if self.nonstop_human and human.reached_destination():
                 self._generate_human(human)
 
@@ -256,3 +247,6 @@ class CrowdSim(gym.Env):
 
     def legal_actions(self):
         return list(range(41))
+
+    def render(self) -> None:
+        raise NotImplementedError

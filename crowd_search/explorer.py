@@ -91,7 +91,7 @@ class Explorer:
             # Reset the environment at the beginning of each episode and add initial
             # information to replay memory.
             game_history = GameHistory()
-            observation = self.environment.reset("train")
+            observation = self.environment.reset()
             robot_state = self.environment.robot.get_full_state()
             game_history.observation_history.append((robot_state, observation))
             game_history.reward_history.append(0)
@@ -259,9 +259,7 @@ class MCTS:
             root_predicted_value = support_to_scalar(
                 root_predicted_value, self.config["support-size"]
             ).item()
-            reward = support_to_scalar(
-                reward, self.config["support-size"]
-            ).item()
+            reward = support_to_scalar(reward, self.config["support-size"]).item()
 
             assert (
                 legal_actions
@@ -307,9 +305,7 @@ class MCTS:
                 torch.tensor([[action]]).to(parent.hidden_state.device),
             )
             value = support_to_scalar(value, self.config["support-size"]).item()
-            reward = support_to_scalar(
-                reward, self.config["support-size"]
-            ).item()
+            reward = support_to_scalar(reward, self.config["support-size"]).item()
             node.expand(
                 self.config["action-space"],
                 virtual_to_play,
@@ -552,6 +548,7 @@ class MinMaxStats:
             # We normalize only when we have set the maximum and minimum values
             return (value - self.minimum) / (self.maximum - self.minimum)
         return value
+
 
 def support_to_scalar(action_logits, support_size):
     """

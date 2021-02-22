@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+"""Main script to run and start training job."""
 
 import argparse
 import datetime
 import pathlib
+from typing import List
 
 import torch
 from torch.distributed import rpc
@@ -15,7 +17,9 @@ from crowd_search import trainer
 _LOG_DIR = pathlib.Path("~/runs/crowd-search").expanduser()
 
 
-def _get_learner_explorers(learner_rank, num_explorers, num_learners):
+def _get_learner_explorers(
+    learner_rank: int, num_explorers: int, num_learners: int
+) -> List[int]:
     """Helper function to assign explorer process ranks to trainers."""
     return list(
         range(
@@ -58,8 +62,6 @@ def train(
         torch.cuda.set_device(-1)
 
     train_cfg = cfg.get("training")
-    num_learners = train_cfg.get("num-learners")
-    num_explorers = train_cfg.get("num-explorers")
 
     learner_explorer_groups = {
         learner_rank: _get_learner_explorers(learner_rank, num_explorers, num_learners)
@@ -86,7 +88,6 @@ def train(
         )
         trainer_node = trainer.Trainer(
             cfg=cfg,
-            models_cfg=cfg.get("models"),
             device=device,
             num_learners=num_learners,
             explorer_nodes=learner_explorer_groups[local_rank],

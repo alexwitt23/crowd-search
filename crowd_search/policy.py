@@ -57,7 +57,7 @@ class CrowdSearchPolicy(nn.Module):
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1,32)
+        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1, 32)
         self.dynamics_reward_network = models.DynamicsNetwork(
             32, self.full_support_size
         )

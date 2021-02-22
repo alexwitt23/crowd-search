@@ -1,4 +1,4 @@
-"""Trainer class. 
+"""Trainer class.
 
 The basic idea is the class that executes the training loops. It manages a few things:
 
@@ -26,7 +26,7 @@ from torch.utils import data
 from crowd_search import dataset
 from crowd_search import distributed_utils
 from crowd_search import explorer
-from crowd_search import policy2
+from crowd_search import policy
 from crowd_search import shared_storage
 from crowd_search.visualization import viz
 
@@ -35,7 +35,6 @@ class Trainer:
     def __init__(
         self,
         cfg: Dict,
-        models_cfg: Dict,
         device: torch.device,
         num_learners: int,
         explorer_nodes: List[int],
@@ -60,7 +59,7 @@ class Trainer:
             self.is_main = True
 
         # Create the policy
-        self.policy = policy2.CrowdSearchPolicy(
+        self.policy = policy.CrowdSearchPolicy(
             cfg.get("models"),
             cfg.get("robot"),
             cfg.get("human"),
@@ -195,7 +194,7 @@ class Trainer:
             for mini_epoch in range(10):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
-                for idx, batch in enumerate(loader):
+                for batch in loader:
                     (
                         robot_state_batch,
                         human_state_batch,
@@ -204,7 +203,6 @@ class Trainer:
                         target_reward,
                         target_policy,
                         gradient_scale_batch,
-                        weight_batch,
                         weight_batch,
                     ) = batch
                     target_value_scalar = numpy.array(target_value, dtype="float32")
@@ -228,10 +226,10 @@ class Trainer:
                     # target_policy: batch, num_unroll_steps+1, len(action_space)
                     # gradient_scale_batch: batch, num_unroll_steps+1
 
-                    target_value = policy2.scalar_to_support(
+                    target_value = policy.scalar_to_support(
                         target_value, self.config["support-size"]
                     )
-                    target_reward = policy2.scalar_to_support(
+                    target_reward = policy.scalar_to_support(
                         target_reward, self.config["support-size"]
                     )
                     # target_value: batch, num_unroll_steps+1, 2*support_size+1
@@ -259,10 +257,12 @@ class Trainer:
                             hidden_state, action_batch[:, i].unsqueeze(-1)
                         )
 
-                        # Scale the gradient at the start of the dynamics function (See paper appendix Training)
+                        # Scale the gradient at the start of the dynamics function
+                        # (See paper appendix Training)
                         hidden_state.register_hook(lambda grad: grad * 0.5)
                         predictions.append((value, reward, policy_logits))
-                    # predictions: num_unroll_steps+1, 3, batch, 2*support_size+1 | 2*support_size+1 | 9 (according to the 2nd dim)
+                    # predictions: num_unroll_steps+1, 3, batch, 2*support_size+1 |
+                    # 2*support_size+1 | 9 (according to the 2nd dim)
 
                     ## Compute losses
                     value_loss, reward_loss, policy_loss = (0, 0, 0)
@@ -279,9 +279,10 @@ class Trainer:
                     )
                     value_loss += current_value_loss
                     policy_loss += current_policy_loss
-                    # Compute priorities for the prioritized replay (See paper appendix Training)
+                    # Compute priorities for the prioritized replay
+                    # (See paper appendix Training)
                     pred_value_scalar = (
-                        policy2.support_to_scalar(value, self.config["support-size"])
+                        policy.support_to_scalar(value, self.config["support-size"])
                         .detach()
                         .cpu()
                         .numpy()
@@ -307,7 +308,8 @@ class Trainer:
                             target_policy[:, i],
                         )
 
-                        # Scale gradient by the number of unroll steps (See paper appendix Training)
+                        # Scale gradient by the number of unroll steps
+                        # (See paper appendix Training)
                         current_value_loss.register_hook(
                             lambda grad: grad / gradient_scale_batch[:, i]
                         )
@@ -322,11 +324,10 @@ class Trainer:
                         reward_loss += current_reward_loss
                         policy_loss += current_policy_loss
 
-                        # Compute priorities for the prioritized replay (See paper appendix Training)
+                        # Compute priorities for the prioritized replay
+                        # (See paper appendix Training)
                         pred_value_scalar = (
-                            policy2.support_to_scalar(
-                                value, self.config["support-size"]
-                            )
+                            policy.support_to_scalar(value, self.config["support-size"])
                             .detach()
                             .cpu()
                             .numpy()
@@ -337,7 +338,8 @@ class Trainer:
                             ** self.config["PER-alpha"]
                         )
 
-                    # Scale the value loss, paper recommends by 0.25 (See paper appendix Reanalyze)
+                    # Scale the value loss, paper recommends by 0.25
+                    # (See paper appendix Reanalyze)
                     loss = (
                         value_loss * self.config["value-loss-weight"]
                         + reward_loss

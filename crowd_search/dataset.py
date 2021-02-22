@@ -2,7 +2,7 @@
 really, it might be removed in the future. The key part is the collation function
 which allows us to batch together the different collections of input data."""
 
-from typing import List, Dict, Tuple
+from typing import Tuple
 
 import numpy
 import torch
@@ -12,6 +12,8 @@ from crowd_search import explorer
 
 
 class Dataset(data.Dataset):
+    """Dataset class."""
+
     def __init__(self):
         super().__init__()
         self.transitions = []
@@ -32,10 +34,12 @@ class Dataset(data.Dataset):
             "action-space": list(range(41)),
         }
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return length of the dataset."""
         return len(self.transitions)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
+        """Retrieve an item from the dataset and prepare it for training."""
         # Retrieve the game from the list of available games.
         game_history = self.transitions[idx]
 
@@ -46,10 +50,6 @@ class Dataset(data.Dataset):
         observation_batch = game_history.get_stacked_observations(
             game_pos, self.config["stacked-observations"]
         )
-        action_batch = actions
-        value_batch = values
-        reward_batch = rewards
-        policy_batch = policies
         gradient_scale_batch = [
             min(
                 self.config["num-unroll-steps"],
@@ -63,15 +63,16 @@ class Dataset(data.Dataset):
 
         return {
             "observation": observation_batch,
-            "action": action_batch,
-            "value": value_batch,
-            "reward": reward_batch,
-            "policy": policy_batch,
+            "action": actions,
+            "value": values,
+            "reward": rewards,
+            "policy": policies,
             "weight": weight_batch,
             "gradient": gradient_scale_batch,
         }
 
-    def sample_position(self, game_history: explorer.GameHistory) -> Tuple[int, float]:
+    @staticmethod
+    def sample_position(game_history: explorer.GameHistory) -> Tuple[int, float]:
         """Sample position from game either uniformly or according to some priority.
         See paper appendix Training."""
         position_probs = game_history.priorities / sum(game_history.priorities)
@@ -121,6 +122,7 @@ class Dataset(data.Dataset):
         return target_values, target_rewards, target_policies, actions
 
     def compute_target_value(self, game_history: explorer.GameHistory, index: int):
+        """Docstring"""
         # The value target is the discounted root value of the search tree td_steps into the
         # future, plus the discounted sum of all rewards until then.
         bootstrap_index = index + self.config["td-steps"]
@@ -156,6 +158,8 @@ class Dataset(data.Dataset):
 
 
 def collate(batches):
+    """This function takes in a list of data from the various data loading
+    threads and combines them all into one batch for training."""
     (
         robot_state_batch,
         human_state_batch,
@@ -166,18 +170,16 @@ def collate(batches):
         gradient_scale_batch,
         weight_batch,
     ) = ([], [], [], [], [], [], [], [])
-    # weight_batch = numpy.array(weight_batch, dtype="float32") / max(
-    #    weight_batch
-    # )=
-    for data in batches:
-        robot_state_batch.append(data["observation"][0])
-        human_state_batch.append(data["observation"][1])
-        action_batch.append(torch.Tensor(data["action"]))
-        value_batch.append(torch.Tensor(data["value"]))
-        reward_batch.append(torch.Tensor(data["reward"]))
-        policy_batch.append(torch.Tensor(data["policy"]))
-        gradient_scale_batch.append(torch.Tensor(data["gradient"]))
-        weight_batch.append(torch.Tensor([data["weight"]]))
+
+    for data_batch in batches:
+        robot_state_batch.append(data_batch["observation"][0])
+        human_state_batch.append(data_batch["observation"][1])
+        action_batch.append(torch.Tensor(data_batch["action"]))
+        value_batch.append(torch.Tensor(data_batch["value"]))
+        reward_batch.append(torch.Tensor(data_batch["reward"]))
+        policy_batch.append(torch.Tensor(data_batch["policy"]))
+        gradient_scale_batch.append(torch.Tensor(data_batch["gradient"]))
+        weight_batch.append(torch.Tensor([data_batch["weight"]]))
 
     robot_state_batch = torch.stack(robot_state_batch)
     human_state_batch = torch.stack(human_state_batch)
