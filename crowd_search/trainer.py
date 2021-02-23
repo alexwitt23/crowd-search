@@ -78,29 +78,13 @@ class Trainer:
                     self.policy, device_ids=None, find_unused_parameters=True
                 )
 
-        self.config = {
-            "support-size": 300,
-            "action-space": list(
-                range(len(distributed_utils.unwrap_ddp(self.policy).action_space))
-            ),
-            "root-dirichlet-alpha": 0.25,
-            "root-exploration-fraction": 0.25,
-            "num-simulations": 35,
-            "stacked-observations": 32,
-            "pb-c-base": 19652,
-            "pb-c-init": 1.25,
-            "players": list(range(1)),
-            "discount": 0.997,
-            "td-steps": 10,
-            "PER": True,
-            "PER-alpha": 1,
-            "value-loss-weight": 0.25,
-        }
+        cfg.get("mu-zero").update({"action-space": list(range(41))}) 
+        self.config = cfg.get("mu-zero")
 
-        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=1.0e-3)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=1.0e-2)
         self.training_step = 0
 
-        self.dataset = dataset.Dataset()
+        self.dataset = dataset.Dataset(cfg.get("mu-zero"))
         self.explorer_references = []
 
         storage_info = rpc.get_worker_info(f"Storage:{storage_node}")

@@ -34,28 +34,8 @@ class Explorer:
         )
 
         self.robot = agents.Robot(cfg.get("robot"))
-        self.policy = policy.CrowdSearchPolicy(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            cfg.get("action-space"),
-            "cpu",
-        )
-        self.config = {
-            "support-size": 300,
-            "action-space": list(range(len(self.policy.action_space))),
-            "root-dirichlet-alpha": 0.25,
-            "root-exploration-fraction": 0.25,
-            "num-simulations": 10,
-            "stacked-observations": 32,
-            "pb-c-base": 19652,
-            "pb-c-init": 1.25,
-            "players": list(range(1)),
-            "discount": 0.997,
-            "td-steps": 10,
-            "PER-alpha": True,
-        }
+        self.policy = None
+        self.config = cfg.get("mu-zero")
         self.history = []
         self.storage_node = storage_node
         self._update_policy()
@@ -87,7 +67,6 @@ class Explorer:
         while True:
             states, actions, rewards = [], [], []
             simulation_done = False
-
             # Reset the environment at the beginning of each episode and add initial
             # information to replay memory.
             game_history = GameHistory()
@@ -121,7 +100,6 @@ class Explorer:
                 observation, reward, simulation_done = self.environment.step(
                     self.policy.action_space[action]
                 )
-
                 game_history.store_search_statistics(root, self.config["action-space"])
                 game_history.observation_history.append(
                     (
@@ -254,7 +232,6 @@ class MCTS:
                 policy_logits,
                 hidden_state,
             ) = policy.initial_inference(robot_states, human_states)
-
             root_predicted_value = support_to_scalar(
                 root_predicted_value, self.config["support-size"]
             ).item()
