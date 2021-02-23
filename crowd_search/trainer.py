@@ -81,9 +81,8 @@ class Trainer:
         cfg.get("mu-zero").update({"action-space": list(range(41))}) 
         self.config = cfg.get("mu-zero")
 
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=1.0e-2)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=3.0e-3)
         self.training_step = 0
-
         self.dataset = dataset.Dataset(cfg.get("mu-zero"))
         self.explorer_references = []
 
@@ -140,15 +139,15 @@ class Trainer:
             for history in output:
                 histories.extend(history)
 
-        self.dataset.transitions.extend(histories)
+        self.dataset.transitions.extend(copy.deepcopy(histories))
 
         if self.is_main:
             viz.plot_history(
                 histories[0], self.run_dir / f"plots/{self.global_step}.gif"
             )
 
-        if len(self.dataset.transitions) > 1000:
-            self.dataset.transitions = self.dataset.transitions[-1000:]
+        if len(self.dataset.transitions) > 10000:
+            self.dataset.transitions = self.dataset.transitions[-10000:]
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -160,7 +159,8 @@ class Trainer:
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
             # Update memory from explorer workers
-            print(f"Starting epoch {epoch}.")
+            if self.is_main:
+                print(f"Starting epoch {epoch}.")
             if self.num_learners > 1:
                 sampler = data.distributed.DistributedSampler(
                     self.dataset, shuffle=True
@@ -175,7 +175,7 @@ class Trainer:
                 sampler=sampler,
                 collate_fn=dataset.collate,
             )
-            for mini_epoch in range(10):
+            for mini_epoch in range(20):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:

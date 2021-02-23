@@ -34,8 +34,16 @@ class Explorer:
         )
 
         self.robot = agents.Robot(cfg.get("robot"))
-        self.policy = None
+        self.policy = policy.CrowdSearchPolicy(
+            cfg.get("models"),
+            cfg.get("robot"),
+            cfg.get("human"),
+            cfg.get("incentives"),
+            cfg.get("action-space"),
+            "cpu",
+        )
         self.config = cfg.get("mu-zero")
+        self.config["action-space"] = self.environment.legal_actions()
         self.history = []
         self.storage_node = storage_node
         self._update_policy()
