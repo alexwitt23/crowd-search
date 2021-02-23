@@ -11,13 +11,11 @@ from third_party.crowd_sim.envs.utils import agent_actions
 
 class ORCA:
     def __init__(self, environment_cfg: Dict[str, Any]) -> None:
-        """
-        ORCA first uses neighborDist and maxNeighbors to find neighbors that need to be taken into account.
-        Here set them to be large enough so that all agents will be considered as neighbors.
-        Time_horizon should be set that at least it's safe for one time step
-
-        In this work, obstacles are not considered. So the value of time_horizon_obst doesn't matter.
-        """
+        """ORCA first uses neighborDist and maxNeighbors to find neighbors that need to
+        be taken into account. Here set them to be large enough so that all agents will
+        be considered as neighbors. Time_horizon should be set that at least it's safe
+        for one time step  In this work, obstacles are not considered. So the value of
+        time_horizon_obst doesn't matter."""
         # Parse the environment configuration.
         self.kinematics = environment_cfg.get("kinematics")
         self.safety_space = environment_cfg.get("safety-space")
@@ -31,13 +29,16 @@ class ORCA:
         self.sim = None
 
     def predict(
-        self, human_states, robot_states,
-    ):
+        self, human_states: List["agents.Human"], robot_states: List["agents.Robot"],
+    ) -> None:
         """Create a rvo2 simulation at each time step and run one step
-        Python-RVO2 API: https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/rvo2.pyx
-        How simulation is done in RVO2: https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/Agent.cpp
+        Python-RVO2 API:
+        https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/rvo2.pyx
+        How simulation is done in RVO2:
+        https://github.com/sybrenstuvel/Python-RVO2/blob/master/src/Agent.cpp
 
-        Agent doesn't stop moving after it reaches the goal, because once it stops moving, the reciprocal rule is broken
+        Agent doesn't stop moving after it reaches the goal, because once it stops
+        moving, the reciprocal rule is broken
 
         :param state:
         :return:
@@ -99,7 +100,7 @@ class ORCA:
                 # Get the positional difference between the agent and its goal.
                 velocity = agent_state.get_goal_position() - agent_state.get_position()
                 speed = torch.norm(velocity)
-                velocity = velocity / speed if speed > 1 else velocity
+                velocity = velocity / speed
                 self.sim.setAgentPrefVelocity(idx, tuple(velocity.tolist()))
 
         # Setp the simulation and extract the human agent actions.

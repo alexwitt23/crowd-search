@@ -1,3 +1,6 @@
+"""Basic agents classes meant to simplify and standardize state checking (getting
+position, velocity, etc)."""
+
 from typing import Any, Dict
 
 import torch
@@ -11,10 +14,12 @@ class Agent:
     def __init__(self, state_tensor: torch.Tensor = None) -> None:
         # [pos_x, pos_y, vel_x, vel_y, goal_x, goal_y, direction, radius, v_pref]
         self.state_tensor = state_tensor
+        self.radius = None
+        self.preferred_velocity = None
 
     def get_full_state(self) -> torch.Tensor:
         """Get agent's full state. Unsqueeze to add dimension for 'agents'.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_full_state()
@@ -24,7 +29,7 @@ class Agent:
 
     def get_position(self) -> torch.Tensor:
         """Get agent's position.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_position()
@@ -34,7 +39,7 @@ class Agent:
 
     def get_velocity(self) -> torch.Tensor:
         """Get agent's velocity.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_velocity()
@@ -44,7 +49,7 @@ class Agent:
 
     def get_goal_position(self) -> torch.Tensor:
         """Get goal position of the agent.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_goal_position()
@@ -54,7 +59,7 @@ class Agent:
 
     def get_radius(self) -> float:
         """Get radius of agent.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_radius()
@@ -64,7 +69,7 @@ class Agent:
 
     def get_preferred_velocity(self) -> float:
         """Get agent's preferred velocity.
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_preferred_velocity()
@@ -75,9 +80,9 @@ class Agent:
     def get_observable_state(self) -> torch.Tensor:
         """Return what is observable to other agents:
         pos_x, pos_y, vel_x, vel_y, radius
-        
+
         TODO(alex): do we want to add direction?
-        
+
         Usage:
             >>> agent = Agent(torch.Tensor([0, 1, 2, 3, -1, -2, 0, 5, 4]))
             >>> agent.get_observable_state()
@@ -85,9 +90,10 @@ class Agent:
         """
         return torch.Tensor(self.state_tensor[:4].tolist() + [self.state_tensor[-2]])
 
-    def step(self, action, time_step):
+    def step(self, action: agent_actions.ActionXY, time_step: float) -> None:
+        """Step the agent's position using the supplied action velocity vector."""
         self.state_tensor[0] = self.state_tensor[0] + action.vx * time_step
-        self.state_tensor[1] = self.state_tensor[0] + action.vy * time_step
+        self.state_tensor[1] = self.state_tensor[1] + action.vy * time_step
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
 
@@ -145,7 +151,6 @@ class Robot(Agent):
 
     def get_preferred_velocity(self) -> float:
         return self.preferred_velocity
-
 
     def compute_position(
         self, action: agent_actions.ActionXY, time_step: float

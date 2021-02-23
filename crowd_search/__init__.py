@@ -1,3 +1,5 @@
+"""Expose the crowd simulation environment."""
+
 from gym.envs.registration import register
 
 register(

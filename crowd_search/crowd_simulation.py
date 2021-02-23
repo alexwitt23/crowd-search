@@ -1,20 +1,22 @@
+"""This defined the OpenAI Gym game that we'll use to simulate a crowd of humans
+that our robot(s) can navigate through."""
+
 import random
-from typing import Dict, Union
+from typing import Dict
 
 import gym
-import numpy as np
 import torch
 
 from crowd_search import agents
 from crowd_search import environment
-
 from third_party.crowd_sim.envs.utils import agent_actions
-from third_party.crowd_sim.envs.utils import info
+
+# from third_party.crowd_sim.envs.utils import info
 from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
 class CrowdSim(gym.Env):
-    metadata = {"render.modes": ["human"]}
+    """Crowd simulation environment."""
 
     def __init__(
         self,
@@ -24,21 +26,22 @@ class CrowdSim(gym.Env):
         human_cfg: Dict,
         robot_cfg: Dict,
     ) -> None:
-        """
-        Movement simulation for n+1 agents
-        Agent can either be human or robot.
-        humans are controlled by a unknown and fixed policy.
-        robot is controlled by a known and learnable policy.
+        """Movement simulation for agents plus robot. The humans will be controlled by
+        some known policy like ORCA or socialforce rules. The robot learns a policy
+        to navigate through the crowd."""
 
-        """
         self.time_limit = env_cfg.get("time-limit")
         self.time_step = env_cfg.get("time-step")
         self.human_num = env_cfg.get("num-humans")
+        self.world_width = env_cfg.get("world-width") // 2
+        self.world_height = env_cfg.get("world-height") // 2
+        self.goal_location_width = env_cfg.get("goal-location-width") // 2
+        self.goal_location_height = env_cfg.get("goal-location-height") // 2
 
         self.human_cfg = human_cfg
-
+        self.humans = []
         self.robot = agents.Robot(robot_cfg)
-        self.humans = None
+        # Used to keep track of when simulation times out
         self.global_time = None
         self.robot_sensor_range = None
 
@@ -48,24 +51,9 @@ class CrowdSim(gym.Env):
         self.discomfort_dist = incentive_cfg.get("discomfort-distance")
         self.discomfort_penalty_factor = incentive_cfg.get("discomfort-penalty-factor")
 
-        # simulation configuration
-        self.config = None
-        self.case_capacity = None
-        self.case_size = None
-        self.case_counter = None
-        self.randomize_attributes = None
-        self.train_val_scenario = None
-        self.test_scenario = None
-        self.current_scenario = None
-        self.square_width = None
-        self.circle_radius = 4
-        self.nonstop_human = None
         # TODO(alex): Look into different planners. Socialforce models?
+        # TODO(alex): build a human policy factory
         self.motion_planner = environment.ORCA(motion_planner_cfg)
-
-        # for visualization
-        self.states = []
-        self.phase = None
 
     def __str__(self) -> str:
         """Print a verbal description of the simulation environment."""
@@ -85,21 +73,21 @@ class CrowdSim(gym.Env):
         # Create initial human agent.
         human = agents.Human(self.human_cfg)
 
-        # Generate random human attributes and make sure the blob does not
-        # collide with any of the existing blobs or robot.
+        # Generate random human attributes and make sure the human does not
+        # collide with any of the existing humans or robot.
         while True:
-            angle = np.random.random() * np.pi * 2
-            # add some noise to simulate all the possible cases robot could meet with human
-            px_noise = (np.random.random() - 0.5) * human.get_preferred_velocity()
-            py_noise = (np.random.random() - 0.5) * human.get_preferred_velocity()
-            px = self.circle_radius * np.cos(angle) + px_noise
-            py = self.circle_radius * np.sin(angle) + py_noise
-
+            positionx = random.uniform(-self.world_width, self.world_width)
+            positiony = random.uniform(-self.world_height, self.world_height)
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
                 )
-                if torch.norm(torch.Tensor([px, py]) - agent.get_position()) < min_dist:
+                if (
+                    torch.norm(
+                        torch.Tensor([positionx, positiony]) - agent.get_position()
+                    )
+                    < min_dist
+                ):
                     # Collide, generate another human
                     break
             else:
@@ -108,35 +96,35 @@ class CrowdSim(gym.Env):
 
         # TODO(alex): Do we want more complicated motion for the humans?
         human.set_state(
-            position_x=px,
-            position_y=py,
-            velocity_x=0,
-            velocity_y=0,
-            goal_position_x=-px,
-            goal_position_y=-py,
+            position_x=positionx,
+            position_y=positiony,
+            velocity_x=0.0,
+            velocity_y=0.0,
+            goal_position_x=-positionx,
+            goal_position_y=-positiony,
             direction=0.0,
         )
-
         return human
 
-    def reset(self, phase: str = "test") -> torch.Tensor:
-        """Reset the simulation environment.
-        
-        TODO(alex) implement phases
-        """
+    def reset(self) -> torch.Tensor:
+        """Reset the simulation environment. Reset the global time, set a random
+        robot state, and regenerate the human agents."""
 
         self.global_time = 0
-        # TODO(alex): Do better state checking. Should
+        # TODO(alex): Do better state checking
         self.robot.set_state(
-            position_x=random.uniform(-1.0, 1.0),
-            position_y=random.uniform(-1.0, 1.0),
-            velocity_x=random.uniform(-1.0, 1.0),
-            velocity_y=random.uniform(-1.0, 1.0),
-            goal_position_x=0,
-            goal_position_y=0,
-            direction=random.uniform(0, 2 * np.pi),
+            position_x=random.uniform(-self.world_width, self.world_width),
+            position_y=random.uniform(-self.world_height, self.world_height),
+            velocity_x=0.0,
+            velocity_y=0.0,
+            goal_position_x=random.uniform(
+                -self.goal_location_width, self.goal_location_width
+            ),
+            goal_position_y=random.uniform(
+                -self.goal_location_height, self.goal_location_height
+            ),
+            direction=0.0,
         )
-
         # Generate the humans.
         self.humans = []
         for _ in range(self.human_num):
@@ -145,11 +133,13 @@ class CrowdSim(gym.Env):
         # Get the robot's first initial observation
         robot_observation = self.collate_robot_observation()
 
+        # Reset the human motion planner simulation.
+        self.motion_planner.sim = None
+
         return robot_observation
 
     def step(
-        self,
-        action: agent_actions.ActionXY,
+        self, action: agent_actions.ActionXY,
     ):
         """Compute actions for all agents, detect collision, update environment and return
         (ob, reward, done, info). ORCA is used to control human motion."""
@@ -160,47 +150,48 @@ class CrowdSim(gym.Env):
         # collision detection
         dmin = float("inf")
         collision = False
-        for i, human in enumerate(self.humans):
-            px, py = (human.get_position() - self.robot.get_position()).tolist()
-            vx, vy = (human.get_velocity() - self.robot.get_velocity()).tolist()
-
-            ex = px + vx * self.time_step
-            ey = py + vy * self.time_step
+        for human in self.humans:
+            pos_x, pos_y = (human.get_position() - self.robot.get_position()).tolist()
+            vel_x, vel_y = (human.get_velocity() - self.robot.get_velocity()).tolist()
+            future_x = pos_x + vel_x * self.time_step
+            future_y = pos_y + vel_y * self.time_step
 
             # closest distance between boundaries of two agents
-            gx, gy = self.robot.get_goal_position()
+            goal_x, goal_y = self.robot.get_goal_position()
             closest_dist = (
-                point_to_segment_dist(px, py, ex, ey, gx, gy)
-                - human.radius
+                point_to_segment_dist(pos_x, pos_y, future_x, future_y, goal_x, goal_y)
+                - human.get_radius()
                 - self.robot.get_radius()
             )
             if closest_dist < 0:
                 collision = True
                 break
-            elif closest_dist < dmin:
+            if closest_dist < dmin:
                 dmin = closest_dist
 
         # check if reaching the goal
-        previous_robot_pos = self.robot.get_position()
         end_position = self.robot.compute_position(action, self.time_step)
 
         reaching_goal = (
             torch.norm(end_position - self.robot.get_goal_position())
             < self.robot.get_radius()
         )
+        # dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
+        # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
+        # further_away = dist_to_goal_fut > dist_to_goal_now
 
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
-            action_info = info.Timeout()
+            # action_info = info.Timeout()
         elif collision:
             reward = self.collision_penalty
             done = True
-            action_info = info.Collision()
+            # action_info = info.Collision()
         elif reaching_goal:
             reward = self.success_reward
             done = True
-            action_info = info.ReachGoal()
+            # action_info = info.ReachGoal()
         elif dmin < self.discomfort_dist:
             # adjust the reward based on FPS
             reward = (
@@ -209,40 +200,23 @@ class CrowdSim(gym.Env):
                 * self.time_step
             )
             done = False
-            action_info = info.Discomfort(dmin)
+            # action_info = info.Discomfort(dmin)
         else:
-            reward = 0.0
+            reward = -0.01
             done = False
-            action_info = info.Nothing()
-
+            # action_info = info.Nothing()
 
         # update all agents
         self.robot.step(action, self.time_step)
-        for human, action in zip(self.humans, human_actions):
-            human.step(action, self.time_step)
-            if self.nonstop_human and human.reached_destination():
-                self._generate_human(human)
+
+        for human, human_action in zip(self.humans, human_actions):
+            human.step(human_action, self.time_step)
+            # if human.reached_destination():
+            #    self._generate_human(human)
 
         self.global_time += self.time_step
-        ob = self.collate_robot_observation()
-
-
-        return ob, reward, done, action_info
-
-    def compute_observation_for(self, agent):
-        if agent == self.robot:
-            ob = []
-            for human in self.humans:
-                ob.append(human.get_observable_state())
-        else:
-            ob = [
-                other_human.get_observable_state()
-                for other_human in self.humans
-                if other_human != agent
-            ]
-            if self.robot.visible:
-                ob += [self.robot.get_observable_state()]
-        return ob
+        robot_observation = self.collate_robot_observation()
+        return robot_observation, reward, done
 
     def collate_robot_observation(self):
         """The robot observation consists of the observable states of all other
@@ -250,10 +224,16 @@ class CrowdSim(gym.Env):
 
         return torch.stack([human.get_observable_state() for human in self.humans])
 
-    def collate_human_observation(self, human: agents.Human):
+    def collate_human_observation(human: agents.Human):
         """A human's observations are the robots and other humans if they are
         visible."""
         other_humans = [
             human2.get_observable_state() for human2 in self.humans if human2 != human
         ]
         return other_humans + self.robot.get_observable_state()
+
+    def legal_actions(self):
+        return list(range(41))
+
+    def render(self, mode):
+        raise NotImplementedError

@@ -1,17 +1,18 @@
 """Describe the policy that governs the robot's decisions."""
 
-import random
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
+from torch import nn
 
 from crowd_search import models
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
-from third_party.crowd_sim.envs.utils.utils import point_to_segment_dist
 
 
-class CrowdSearchPolicy:
+class CrowdSearchPolicy(nn.Module):
+    """Describe the policy that governs the robot's decisions."""
+
     def __init__(
         self,
         models_cfg: Dict,
@@ -30,56 +31,39 @@ class CrowdSearchPolicy:
         self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
         self.device = device
 
-        # Build the models.
+        # Build the different models.
         gnn_cfg = models_cfg.get("gnn")
         self.gnn = models.GNN(
             gnn_cfg.get("robot-state-dimension"),
             gnn_cfg.get("human-state-dimension"),
-            attn_layer_channels=gnn_cfg.get("mlp-layer-channels"),
+            mlp_layer_channels=gnn_cfg.get("mlp-layer-channels"),
             num_attention_layers=gnn_cfg.get("gnn-layers"),
         )
         self.gnn.to(device=device)
         self.gnn.train()
 
-        value_net_cfg = models_cfg.get("value-net")
-        self.value_estimator = models.ValueNet(
-            value_net_cfg.get("channel-depth"), value_net_cfg.get("net-dims")
-        )
-        self.value_estimator.to(self.device)
-        self.value_estimator.train()
-
-        state_net_cfg = models_cfg.get("state-net")
-        self.state_estimator = models.StateNet(
-            state_net_cfg.get("time-step"), state_net_cfg.get("channel-depth")
-        )
-        self.state_estimator.to(device)
-        self.state_estimator.train()
-
-        self.time_step = state_net_cfg.get("time-step")
-
-        self.phase = "train"
-        self.epsilon = 0.5
-        self.action_space = None
-
         self.speed_samples = action_space_cfg.get("speed-samples")
         self.rotation_samples = action_space_cfg.get("rotation-samples")
-        self.planning_depth = 1
-        self.planning_width = 1
-        self.gamma = 0.9
+
         self.v_pref = 1.0
+        self.build_action_space(self.v_pref)
+        self.full_support_size = 601
+        self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
+        # TODO(alex): replace with stacked observations
+        self.action_predictor = models.PredictionNetwork(
+            action_space_size=self.action_space_size, input_state_dim=32,
+        )
+        self.action_predictor.to(self.device)
+        self.action_predictor.train()
 
-    def set_epsilon(self, epsilon):
-        self.epsilon = epsilon
+        self.dynamics_encoded_state_network = models.DynamicsNetwork(32 + 1, 32)
+        self.dynamics_reward_network = models.DynamicsNetwork(
+            32, self.full_support_size
+        )
 
-    def set_phase(self, phase):
-        self.phase = phase
-
-    def set_time_step(self, time_step):
-        self.time_step = time_step
-        self.state_estimator.time_step = time_step
-
-    def get_normalized_gamma(self):
-        return pow(self.gamma, self.time_step * self.v_pref)
+    def get_action_space_size(self) -> int:
+        """Return the number of possible actions."""
+        return len(self.action_space)
 
     def build_action_space(self, preferred_velocity: float):
         """Given a desired number of speed and rotation samples, build the action
@@ -103,143 +87,119 @@ class CrowdSearchPolicy:
                     ActionXY(speed * np.cos(rotation), speed * np.sin(rotation))
                 )
 
-    def predict(self, robot_state: torch.Tensor, human_states: torch.Tensor):
+    def initial_inference(self, robot_state: torch.Tensor, human_states: torch.Tensor):
         """
         Args:
-            robot_state: Tensor containing robot state. Comes in with size [1, 9]
-            human_states: Tensor containing human states. Comes in with size [Num_humans, 5]
+            robot_state: Tensor containing robot state. Comes in with size:
+                [batch, num_previous_frames, num_robots, 9]
+            human_states: Tensor containing human states. Comes in with size:
+                [batch, num_previous_frames, num_robots, 5]
         """
-        if self.action_space is None:
-            self.build_action_space(self.v_pref)
-
-        # Select random action ocassionally
-        if self.phase == "train" and np.random.uniform() < self.epsilon:
-            max_action = random.choice(self.action_space)
-        else:
-            max_action = None
-            max_value = float("-inf")
-            max_traj = None
-
-            # Unsqeeze to add batch dim and BNC -> BCN. Since all our layers are
-            # convolutions.
-            robot_state = robot_state.unsqueeze(0).transpose(1, 2).to(self.device)
-            human_states = human_states.unsqueeze(0).transpose(1, 2).to(self.device)
-            # Get the embedding of the current robot and human states.
-            state_embed = self.gnn(robot_state, human_states)
-            # Given an known action from our potential actions space, estimate the state that
-            # results from taking that action.
-            for action in self.action_space:
-
-                # Get next robot state and predicted human states given the action.
-                next_robot_state, next_human_states = self.state_estimator(
-                    robot_state=robot_state,
-                    human_state_embed=state_embed[1],
-                    action=action,
-                )
-                max_next_return, max_next_traj = self.V_planning(
-                    next_robot_state, next_human_states, 2, self.planning_width,
-                )
-                reward_est = self.estimate_reward(robot_state, human_states, action)
-                value = reward_est + self.get_normalized_gamma() * max_next_return
-                if value > max_value:
-                    max_value = value
-                    max_action = action
-                    max_traj = [
-                        ((robot_state, human_states), action, reward_est)
-                    ] + max_next_traj
-
-            if max_action is None:
-                raise ValueError("Value network is not well trained.")
-            
-        if self.phase == "train":
-            self.last_state = (robot_state, human_states)
-        else:
-            self.traj = max_traj
-
-        return max_action
-
-    def V_planning(
-        self, robot_state: torch.Tensor, human_state: torch.Tensor, depth, width
-    ):
-        """ Plans n steps into future. Computes the value for the current state as well as the trajectories
-        defined as a list of (state, action, reward) triples
-
-        """
-        robot_state_embed, human_state_embed = self.gnn(robot_state, human_state)
-        current_state_value = self.value_estimator(robot_state_embed)
-        if depth == 1:
-            return current_state_value, [((robot_state, human_state), None, None)]
-
-        returns = []
-        trajs = []
-
-        for action in self.action_space:
-            next_robot_state, next_human_state = self.state_estimator(
-                robot_state, human_state_embed, action
-            )
-            reward_est = self.estimate_reward(
-                next_robot_state, next_human_state, action
-            )
-            next_value, next_traj = self.V_planning(
-                next_robot_state, next_human_state, depth - 1, self.planning_width
-            )
-            return_value = current_state_value / depth + (depth - 1) / depth * (
-                self.get_normalized_gamma() * next_value + reward_est
-            )
-
-            returns.append(return_value)
-            trajs.append([((robot_state, human_state), action, reward_est)] + next_traj)
-
-        max_index = np.argmax(returns)
-        max_return = returns[max_index]
-        max_traj = trajs[max_index]
-
-        return max_return, max_traj
-
-    # TODO(alex): Could we have this estimator be a learned model?
-    def estimate_reward(
-        self,
-        robot_state: torch.Tensor,
-        next_human_states: torch.Tensor,
-        action: ActionXY,
-    ) -> float:
-        # Squeeze out the batch since these environment explorations are always
-        # non-batched. (The batch is just for the models)
-        robot_state = robot_state.transpose(1, 2).squeeze(0)
-        next_human_states = next_human_states.transpose(1, 2).squeeze(0)
-        next_human_pos = next_human_states[:, :2]
-
-        # Calculate where the robot will be given an action.
-        x = robot_state[:, 0] + action.vx * self.time_step
-        y = robot_state[:, 1] + action.vx * self.time_step
-        next_robot_pos = torch.Tensor([[x, y]])  # size: [1, 2]
-
-        distances = torch.linalg.norm(
-            next_human_pos - next_robot_pos, dim=-1, keepdim=True
+        batch_size, *_, robot_dim = robot_state.shape
+        *_, human_dim = human_states.shape
+        # Unsqeeze to add batch dim and BNC -> BCN. Since all our layers are
+        # convolutional tensor format.
+        robot_state = (
+            robot_state.view(batch_size, -1, robot_dim).transpose(1, 2).to(self.device)
         )
-
-        # If any of the distances to humans are less than the sum of their respective radii,
-        # we have a collision.
-        if (distances < self.robot_radius + self.human_radius).any():
-            return self.incentives.get("collision")
-
-        # If not collision, we want to check for discomfort levels.
-        discomfort = distances[
-            distances + self.discomfort_distance < self.robot_radius + self.human_radius
-        ]
-        if discomfort.numel():
-            return (
-                (torch.min(discomfort) - self.discomfort_distance)
-                * self.discomfort_distance_factor
-                * self.time_step
-            )
-
-        goal_position = torch.Tensor([robot_state[:, 4], robot_state[:, 5]]).to(
-            self.device
+        human_states = (
+            human_states.view(batch_size, -1, human_dim).transpose(1, 2).to(self.device)
         )
-        reaching_goal = torch.norm(next_robot_pos - goal_position) < robot_state[0, -2]
+        # Get the embedding of the current robot and human states.
+        encoded_state = self.gnn(robot_state, human_states)
+        # encoded_state = encoded_state.view(1, -1, 1)
+        policy_logits, value = self.action_predictor.forward(encoded_state)
+        reward = (
+            torch.zeros(1, self.full_support_size)
+            .scatter(1, torch.Tensor([[self.full_support_size // 2]]).long(), 1.0)
+            .repeat(len(encoded_state), 1)
+            .to(encoded_state.device)
+        )
+        return value, reward, policy_logits, encoded_state
 
-        if reaching_goal:
-            return 1.0
-        else:
-            return 0.0
+    def dynamics(
+        self, encoded_state: torch.Tensor, action: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """TODO(alex): Docstring"""
+        # Stack encoded_state with a game specific one hot encoded action
+        # (See paper appendix Network Architecture)
+        action_one_hot = (
+            torch.ones((encoded_state.shape[0], 1, encoded_state.shape[2],))
+            .to(action.device)
+            .float()
+        )
+        action_one_hot = action[:, :, None] * action_one_hot / self.action_space_size
+        dynamics_tensor = torch.cat((encoded_state, action_one_hot), dim=1)
+        next_encoded_state = self.dynamics_encoded_state_network(dynamics_tensor)
+        reward = self.dynamics_reward_network(next_encoded_state).max(-1).values
+
+        # Scale encoded state between [0, 1] (See paper appendix Training)
+        min_next_encoded_state = next_encoded_state.view(
+            -1, next_encoded_state.shape[1], next_encoded_state.shape[2],
+        ).min(2, keepdim=True)[0]
+        max_next_encoded_state = next_encoded_state.view(
+            -1, next_encoded_state.shape[1], next_encoded_state.shape[2],
+        ).max(2, keepdim=True)[0]
+        scale_next_encoded_state = max_next_encoded_state - min_next_encoded_state
+        scale_next_encoded_state[scale_next_encoded_state < 1e-5] += 1e-5
+        next_encoded_state_normalized = (
+            next_encoded_state - min_next_encoded_state
+        ) / scale_next_encoded_state
+        return next_encoded_state_normalized, reward
+
+    def recurrent_inference(self, encoded_state: torch.Tensor, action: torch.Tensor):
+        """TODO(alex): Docstring"""
+        next_encoded_state, reward = self.dynamics(encoded_state, action)
+        policy_logits, value = self.action_predictor.forward(next_encoded_state)
+        return value, reward, policy_logits, next_encoded_state
+
+    def forward(self):
+        """Defined since nn.Module.forward is abstract."""
+        raise NotImplementedError
+
+
+def support_to_scalar(action_logits, support_size):
+    """
+    Transform a categorical representation to a scalar
+    See paper appendix Network Architecture
+    """
+    # Decode to a scalar
+    probabilities = torch.softmax(action_logits, dim=1)
+    support = (
+        torch.Tensor(list(range(-support_size, support_size + 1)))
+        .expand(probabilities.shape)
+        .float()
+        .to(device=probabilities.device)
+    )
+    x = torch.sum(support * probabilities, dim=1, keepdim=True)
+
+    # Invert the scaling (defined in https://arxiv.org/abs/1805.11593)
+    x = torch.sign(x) * (
+        ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
+        ** 2
+        - 1
+    )
+    return x
+
+
+def scalar_to_support(x, support_size):
+    """
+    Transform a scalar to a categorical representation with (2 * support_size + 1)
+    categories. See paper appendix Network Architecture
+    """
+    # Reduce the scale (defined in https://arxiv.org/abs/1805.11593)
+    x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+
+    # Encode on a vector
+    x = torch.clamp(x, -support_size, support_size)
+    floor = x.floor()
+    prob = x - floor
+    logits = torch.zeros(x.shape[0], x.shape[1], 2 * support_size + 1).to(x.device)
+    logits.scatter_(
+        2, (floor + support_size).long().unsqueeze(-1), (1 - prob).unsqueeze(-1)
+    )
+    indexes = floor + support_size + 1
+    prob = prob.masked_fill_(2 * support_size < indexes, 0.0)
+    indexes = indexes.masked_fill_(2 * support_size < indexes, 0.0)
+    logits.scatter_(2, indexes.long().unsqueeze(-1), prob.unsqueeze(-1))
+    return logits

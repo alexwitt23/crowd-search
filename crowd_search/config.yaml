@@ -12,19 +12,44 @@ training:
   num-learners: 2
   # The number separate processes for exploring the environment _per learner node_.
   num-explorers: 8
-  # The batch size on one training node (a.k.a the same for all trainers)
-  batch-size: 60
+  # The batch size on one training node (the same for all trainers)
+  batch-size: 50
+
+#mu-zero:
+  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
+  # of -support_size to support_size. Choose it so that
+  # support_size <= sqrt(max(abs(discounted reward)))
+#  support-size: 300
+#  root-dirichlet-alpha: 0.25
+#  root-exploration-fraction: 0.25
+#  num-simulations: 20
+#  stacked-observations: 32
+#  pb-c-base: 19652
+#  pb-c-init: 1.25
+#  players: [0]
+#  # Chronological discount of the reward
+#  discount: 0.997
+#  # Number of steps in the future to take into account for calculating the target value
+#  td-steps: 20
+#  PER: True
+#  PER-alpha: 0.1
 
 
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 5
+  time-limit: 120
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
-  num-humans: 2
+  num-humans: 10
   
+  world-width: 20
+  world-height: 20
+  # This could be the same as world size above, or if you want to confine the
+  # goal location to a smaller region
+  goal-location-width: 6.0
+  goal-location-height: 6.0
 
 # ORCA related configurations. NOTE, this is named for human planning, but
 # if does take the robot(s) states into consideration.
@@ -90,7 +115,8 @@ robot:
   preferred-velocity: 2.0
 
 # D-step planning used to predict value of potential states. These parameters
-# define the space to sample for values.
+# define the space to sample for values. The total action space will be 
+# speed-samples * rotation-samples + 1. The +1 is a standstill move.
 action-space:
   # Define the kinematics equations used to update the position.
   kinematics: "holonomic"
