@@ -15,24 +15,26 @@ training:
   # The batch size on one training node (the same for all trainers)
   batch-size: 50
 
-#mu-zero:
+mu-zero:
   # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
   # of -support_size to support_size. Choose it so that
   # support_size <= sqrt(max(abs(discounted reward)))
-#  support-size: 300
-#  root-dirichlet-alpha: 0.25
-#  root-exploration-fraction: 0.25
-#  num-simulations: 20
-#  stacked-observations: 32
-#  pb-c-base: 19652
-#  pb-c-init: 1.25
-#  players: [0]
-#  # Chronological discount of the reward
-#  discount: 0.997
-#  # Number of steps in the future to take into account for calculating the target value
-#  td-steps: 20
-#  PER: True
-#  PER-alpha: 0.1
+  support-size: 300
+  root-dirichlet-alpha: 0.25
+  root-exploration-fraction: 0.25
+  num-simulations: 20
+  stacked-observations: 32
+  pb-c-base: 19652
+  pb-c-init: 1.25
+  players: [0]
+  # Chronological discount of the reward
+  discount: 0.997
+  # Number of steps in the future to take into account for calculating the target value
+  td-steps: 20
+  PER: True
+  PER-alpha: 0.1
+  num-unroll-steps: 5
+  value-loss-weight: 0.25
 
 
 # These are params sent to the crowd_sim environment
@@ -48,8 +50,8 @@ sim-environment:
   world-height: 20
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
-  goal-location-width: 6.0
-  goal-location-height: 6.0
+  goal-location-width: 1.0
+  goal-location-height: 1.0
 
 # ORCA related configurations. NOTE, this is named for human planning, but
 # if does take the robot(s) states into consideration.

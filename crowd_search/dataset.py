@@ -14,25 +14,10 @@ from crowd_search import explorer
 class Dataset(data.Dataset):
     """Dataset class."""
 
-    def __init__(self):
+    def __init__(self, mu_zero_cfg):
         super().__init__()
         self.transitions = []
-        self.config = {
-            "support-size": 300,
-            "root-dirichlet-alpha": 0.25,
-            "root-exploration-fraction": 0.25,
-            "num-simulations": 10,
-            "stacked-observations": 32,
-            "pb-c-base": 19652,
-            "pb-c-init": 1.25,
-            "players": list(range(1)),
-            "discount": 0.997,
-            "td-steps": 10,
-            "PER": True,
-            "PER-alpha": 1,
-            "num-unroll-steps": 5,
-            "action-space": list(range(41)),
-        }
+        self.config = mu_zero_cfg 
 
     def __len__(self) -> int:
         """Return length of the dataset."""

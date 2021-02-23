@@ -224,13 +224,6 @@ class CrowdSim(gym.Env):
 
         return torch.stack([human.get_observable_state() for human in self.humans])
 
-    def collate_human_observation(human: agents.Human):
-        """A human's observations are the robots and other humans if they are
-        visible."""
-        other_humans = [
-            human2.get_observable_state() for human2 in self.humans if human2 != human
-        ]
-        return other_humans + self.robot.get_observable_state()
 
     def legal_actions(self):
         return list(range(41))
