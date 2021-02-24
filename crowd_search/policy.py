@@ -47,7 +47,7 @@ class CrowdSearchPolicy(nn.Module):
 
         self.v_pref = 1.0
         self.build_action_space(self.v_pref)
-        self.full_support_size = 601
+        self.full_support_size = 21
         self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
         # TODO(alex): replace with stacked observations
         self.action_predictor = models.PredictionNetwork(

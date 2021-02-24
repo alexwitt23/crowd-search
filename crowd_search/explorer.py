@@ -78,8 +78,9 @@ class Explorer:
             # Reset the environment at the beginning of each episode and add initial
             # information to replay memory.
             game_history = GameHistory()
-            observation = self.environment.reset()
-            robot_state = self.environment.robot.get_full_state()
+            observation = copy.deepcopy(self.environment.reset())
+            robot_state = copy.deepcopy(self.environment.robot.get_full_state())
+
             game_history.observation_history.append((robot_state, observation))
             game_history.reward_history.append(0)
             game_history.action_history.append(0)
@@ -97,7 +98,7 @@ class Explorer:
                     True,
                 )
                 temperature_threshold = None
-                temperature = 0
+                temperature = 0.35
                 action = self.select_action(
                     root,
                     temperature
@@ -489,8 +490,8 @@ class GameHistory:
             if 0 <= past_observation_index:
                 previous_observations.append(
                     (
-                        self.observation_history[past_observation_index][0],
-                        self.observation_history[past_observation_index][1],
+                        copy.deepcopy(self.observation_history[past_observation_index][0]),
+                        copy.deepcopy(self.observation_history[past_observation_index][1]),
                     )
                 )
             else:

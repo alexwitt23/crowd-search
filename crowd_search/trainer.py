@@ -81,7 +81,9 @@ class Trainer:
         cfg.get("mu-zero").update({"action-space": list(range(41))}) 
         self.config = cfg.get("mu-zero")
 
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=3.0e-3)
+        self.optimizer = torch.optim.Adam(
+            self.policy.parameters(), lr=1.0e-4, weight_decay=1.0e-4
+        )
         self.training_step = 0
         self.dataset = dataset.Dataset(cfg.get("mu-zero"))
         self.explorer_references = []
@@ -120,12 +122,17 @@ class Trainer:
             numpy.mean(history.reward_history) for history in new_history
         ]
         max_rewards = [numpy.max(history.reward_history) for history in new_history]
+        
+        sim_time = numpy.mean([len(history.reward_history) for history in new_history])
         if self.is_main:
             self.logger.add_scalar(
                 "explorer/avg_reward", numpy.mean(average_rewards), self.global_step
             )
             self.logger.add_scalar(
                 "explorer/max_reward", numpy.sum(max_rewards), self.global_step
+            )
+            self.logger.add_scalar(
+                "explorer/avg_sim_time", sim_time, self.global_step
             )
 
     def _combine_datasets(self, histories: List):
@@ -142,12 +149,16 @@ class Trainer:
         self.dataset.transitions.extend(copy.deepcopy(histories))
 
         if self.is_main:
-            viz.plot_history(
-                histories[0], self.run_dir / f"plots/{self.global_step}.gif"
-            )
+            for history in histories:
+                if 1 in history.reward_history:
+                    viz.plot_history(
+                        history, self.run_dir / f"plots/{self.global_step}.gif"
+                    )
 
-        if len(self.dataset.transitions) > 10000:
-            self.dataset.transitions = self.dataset.transitions[-10000:]
+                    break
+
+        if len(self.dataset.transitions) > 2000:
+            self.dataset.transitions = self.dataset.transitions[-2000:]
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -175,7 +186,7 @@ class Trainer:
                 sampler=sampler,
                 collate_fn=dataset.collate,
             )
-            for mini_epoch in range(20):
+            for mini_epoch in range(1000):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
@@ -329,9 +340,9 @@ class Trainer:
                         + reward_loss
                         + policy_loss
                     )
-                    if self.config["PER"]:
-                        # Correct PER bias by using importance-sampling (IS) weights
-                        loss *= weight_batch.squeeze(-1)
+                    #if self.config["PER"]:
+                    #    # Correct PER bias by using importance-sampling (IS) weights
+                    #    loss *= weight_batch.squeeze(-1)
                     # Mean over batch dimension (pseudocode do a sum)
                     loss = loss.mean()
 

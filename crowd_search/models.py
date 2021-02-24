@@ -129,12 +129,16 @@ class PredictionNetwork(nn.Module):
                 input_state_dim,
                 2 * input_state_dim,
                 2 * input_state_dim,
+                2 * input_state_dim,
+                2 * input_state_dim,
                 action_space_size,
             ]
         )
         self.value_estimator = mlp(
-            [input_state_dim, 2 * input_state_dim, 2 * input_state_dim, 601,]
+            [input_state_dim, input_state_dim, input_state_dim]
         )
+        self.test = nn.Linear(action_space_size * 2 * input_state_dim, action_space_size)
+        self.v = nn.Linear(input_state_dim * 2 * input_state_dim, 21)
 
     def forward(
         self, embedded_state: torch.Tensor
@@ -142,8 +146,9 @@ class PredictionNetwork(nn.Module):
         """TODO(alex): docstring"""
         policy_logits = self.action_predictor(embedded_state)
         value = self.value_estimator(embedded_state)
+        bsz = policy_logits.shape[0]
 
-        return policy_logits.max(-1).values, value.max(-1).values
+        return self.test(policy_logits.view(bsz, -1)), self.v(value.view(bsz, -1))
 
 
 # Similar to:

@@ -12,7 +12,7 @@ import torch
 from crowd_search import agents
 
 
-def plot_state(robot_state: torch.Tensor, human_states: torch.Tensor):
+def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
     fig, ax = plt.subplots(figsize=(10, 5))
 
     ax.plot(
@@ -37,8 +37,8 @@ def plot_state(robot_state: torch.Tensor, human_states: torch.Tensor):
             markersize=3,
             color="blue",
         )
-    ax.set_ylim(-10, 10)
-    ax.set_xlim(-10, 10)
+    ax.set_ylim(-3, 3)
+    ax.set_xlim(-3, 3)
     fig.canvas.draw()
     image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
@@ -48,12 +48,13 @@ def plot_state(robot_state: torch.Tensor, human_states: torch.Tensor):
 
 def plot_history(game_history, save_path: pathlib.Path):
     save_path.parent.mkdir(exist_ok=True, parents=True)
-    kwargs_write = {"fps": 30.0, "quantizer": "nq"}
+    kwargs_write = {"fps": 15.0, "quantizer": "nq"}
     imageio.mimsave(
         str(save_path),
         [
-            plot_state(robot_state, human_states)
-            for robot_state, human_states in game_history.observation_history
+            plot_state(idx, robot_state, human_states)
+            for idx, (robot_state, human_states) in enumerate(
+                game_history.observation_history)
         ],
-        fps=1,
+        fps=15
     )

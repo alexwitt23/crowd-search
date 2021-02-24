@@ -113,8 +113,8 @@ class CrowdSim(gym.Env):
         self.global_time = 0
         # TODO(alex): Do better state checking
         self.robot.set_state(
-            position_x=random.uniform(-self.world_width, self.world_width),
-            position_y=random.uniform(-self.world_height, self.world_height),
+            position_x=2,
+            position_y=2,
             velocity_x=0.0,
             velocity_y=0.0,
             goal_position_x=random.uniform(
@@ -179,7 +179,7 @@ class CrowdSim(gym.Env):
         # dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
         # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
         # further_away = dist_to_goal_fut > dist_to_goal_now
-
+        """
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
@@ -202,10 +202,20 @@ class CrowdSim(gym.Env):
             done = False
             # action_info = info.Discomfort(dmin)
         else:
-            reward = -0.01
+            reward = -0.0
             done = False
             # action_info = info.Nothing()
-
+        """
+        if self.global_time >= self.time_limit - 1:
+            reward = 0
+            done = True
+        elif reaching_goal:
+            reward = self.success_reward
+            done = True
+        else:
+            reward = 0.0
+            done = False
+    
         # update all agents
         self.robot.step(action, self.time_step)
 
