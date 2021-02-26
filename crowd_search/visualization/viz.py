@@ -54,7 +54,8 @@ def plot_history(game_history, save_path: pathlib.Path):
         [
             plot_state(idx, robot_state, human_states)
             for idx, (robot_state, human_states) in enumerate(
-                game_history.observation_history)
+                game_history.observation_history
+            )
         ],
-        fps=15
+        fps=15,
     )

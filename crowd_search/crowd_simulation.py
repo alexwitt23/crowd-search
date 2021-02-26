@@ -176,7 +176,7 @@ class CrowdSim(gym.Env):
             torch.norm(end_position - self.robot.get_goal_position())
             < self.robot.get_radius()
         )
-        # dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
+        dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
         # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
         # further_away = dist_to_goal_fut > dist_to_goal_now
         """
@@ -213,9 +213,9 @@ class CrowdSim(gym.Env):
             reward = self.success_reward
             done = True
         else:
-            reward = 0.0
+            reward = (1 / dist_to_goal_fut).clamp(0.0, 0.5)
             done = False
-    
+
         # update all agents
         self.robot.step(action, self.time_step)
 
@@ -233,7 +233,6 @@ class CrowdSim(gym.Env):
         entities in the simulation."""
 
         return torch.stack([human.get_observable_state() for human in self.humans])
-
 
     def legal_actions(self):
         return list(range(41))

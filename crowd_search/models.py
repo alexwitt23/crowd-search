@@ -125,30 +125,18 @@ class PredictionNetwork(nn.Module):
         """TODO(alex): docstring"""
         super().__init__()
         self.action_predictor = mlp(
-            [
-                input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                action_space_size,
-            ]
+            [input_state_dim, 2 * input_state_dim, 2 * input_state_dim, action_space_size,]
         )
-        self.value_estimator = mlp(
-            [input_state_dim, input_state_dim, input_state_dim]
-        )
-        self.test = nn.Linear(action_space_size * 2 * input_state_dim, action_space_size)
-        self.v = nn.Linear(input_state_dim * 2 * input_state_dim, 21)
+        self.test = nn.Linear(action_space_size * 2, action_space_size)
 
     def forward(
         self, embedded_state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """TODO(alex): docstring"""
         policy_logits = self.action_predictor(embedded_state)
-        value = self.value_estimator(embedded_state)
         bsz = policy_logits.shape[0]
 
-        return self.test(policy_logits.view(bsz, -1)), self.v(value.view(bsz, -1))
+        return self.test(policy_logits.view(bsz, -1)).softmax(-1)
 
 
 # Similar to:
@@ -161,8 +149,8 @@ class DynamicsNetwork(torch.nn.Module):
     ):
         """TODO(alex): docstring"""
         super().__init__()
-        self.mlp = mlp([num_channels, full_support_size])
+        self.mlp = mlp([num_channels * 2, num_channels * 2, num_channels * 2, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""
-        return self.mlp(x)
+        return self.mlp(x.view(x.size(0), -1, 1))

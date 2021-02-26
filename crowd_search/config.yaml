@@ -11,9 +11,9 @@ training:
   # doing all CPU training.
   num-learners: 2
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 8
+  num-explorers: 2
   # The batch size on one training node (the same for all trainers)
-  batch-size: 50
+  batch-size: 1024
 
 mu-zero:
   # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
@@ -40,7 +40,7 @@ mu-zero:
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 120
+  time-limit: 30
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
@@ -143,7 +143,7 @@ models:
     # The last dimension here is used as the node channel depth in the graph network.
     mlp-layer-channels: [32, *output-dim]
     # The number of layers in the graph model.
-    gnn-layers: 4
+    gnn-layers: 2
   
   state-net:
     time-step: *time_step

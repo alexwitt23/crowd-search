@@ -15,7 +15,7 @@ import yaml
 from crowd_search import trainer
 
 _LOG_DIR = pathlib.Path("~/runs/crowd-search").expanduser()
-
+torch.set_num_threads(1)
 
 def _get_learner_explorers(
     learner_rank: int, num_explorers: int, num_learners: int
@@ -27,9 +27,6 @@ def _get_learner_explorers(
             (learner_rank * num_explorers) + num_learners + num_explorers,
         )
     )
-
-
-torch.set_num_threads(1)
 
 
 def train(
