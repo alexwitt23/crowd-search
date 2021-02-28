@@ -37,8 +37,8 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
             markersize=3,
             color="blue",
         )
-    ax.set_ylim(-3, 3)
-    ax.set_xlim(-3, 3)
+    ax.set_ylim(-10, 10)
+    ax.set_xlim(-10, 10)
     fig.canvas.draw()
     image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))

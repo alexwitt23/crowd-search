@@ -39,7 +39,7 @@ class Dataset(data.Dataset):
         return {
             "robot_states": self.robot_states[idx],
             "human_states": self.human_states[idx],
-            "action": float(self.actions[idx]),
+            "action": self.actions[idx],
             "reward": self.rewards[idx],
             "logprobs": self.logprobs[idx].item(),
         }
@@ -55,8 +55,13 @@ class Dataset(data.Dataset):
             discounted_rewards.insert(0, discounted_reward)
 
         rewards = torch.tensor(discounted_rewards)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
+        if len(discounted_rewards) > 1:
+            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
 
+        #if torch.isnan(rewards.mean()) or torch.isnan(rewards.std()):
+        #    print(discounted_rewards)
+        #    raise ValueError
+  
         # Stack all the robot states and human states
         robot_states = [state[0] for state in game_history.observation_history]
         human_states = [state[1] for state in game_history.observation_history]
@@ -98,7 +103,7 @@ def collate(batches):
     for data_batch in batches:
         robot_state_batch.append(data_batch["robot_states"])
         human_state_batch.append(data_batch["human_states"])
-        action_batch.append(torch.Tensor([data_batch["action"]]))
+        action_batch.append(data_batch["action"].squeeze(0))
         reward_batch.append(torch.Tensor([data_batch["reward"]]))
         logprob_batch.append(torch.Tensor([data_batch["logprobs"]]))
 

@@ -9,6 +9,7 @@ The basic idea is the class that executes the training loops. It manages a few t
    After a couple epochs, the new policy weights are sent to the explorer nodes that _this_
    trainer node controls.
 """
+import random
 import copy
 import pathlib
 import time
@@ -165,12 +166,26 @@ class Trainer:
             self.dataset.update(history)
 
         if self.is_main:
-            for history in histories:
+            reached_goal = []
+            for idx, history in enumerate(histories):
                 if 1 in history.reward_history:
+                    reached_goal.append(idx)
+            
+            if reached_goal:
+                idx = random.choice(reached_goal)
+                viz.plot_history(
+                    histories[idx], self.run_dir / f"plots/{self.global_step}.gif"
+                )
+            else:
                     viz.plot_history(
-                        history, self.run_dir / f"plots/{self.global_step}.gif"
+                        random.choice(histories), self.run_dir / f"plots/{self.global_step}.gif"
                     )
-                    break
+            
+            self.logger.add_scalar(
+                "explorer/success_frac",
+                len(reached_goal) / len(histories),
+                self.global_step
+            )
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -209,7 +224,6 @@ class Trainer:
                         target_reward,
                         logprobs_batch,
                     ) = batch
-
                     robot_state_batch = robot_state_batch.to(self.device).transpose(
                         1, 2
                     )
@@ -217,8 +231,8 @@ class Trainer:
                         1, 2
                     )
                     action_batch = action_batch.to(self.device)
-                    target_reward = target_reward.to(self.device)
-                    logprobs_batch = logprobs_batch.to(self.device)
+                    target_reward = target_reward.to(self.device).squeeze(-1)
+                    logprobs_batch = logprobs_batch.to(self.device).squeeze(-1)
 
                     logprobs, state_values, dist_entropy = distributed_utils.unwrap_ddp(
                         self.policy
@@ -240,6 +254,17 @@ class Trainer:
                         - 0.01 * dist_entropy
                     )
                     loss = loss.mean()
+
+                    if torch.isnan(loss):
+                        print(torch.isnan(logprobs).any())
+                        print(torch.isnan(logprobs_batch).any())
+                        print(torch.isnan(advantages).any())
+                        print(torch.isnan(surr1).any())
+                        print(torch.isnan(surr2).any())
+                        print(torch.isnan(dist_entropy).any())
+                        print(torch.isnan(state_values).any())
+                        print(torch.isnan(target_reward).any())
+                        raise ValueError("Loss is nan.")
 
                     # Optimize
                     self.optimizer.zero_grad()

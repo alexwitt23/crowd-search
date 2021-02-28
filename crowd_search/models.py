@@ -105,7 +105,6 @@ class GNN(nn.Module):
 
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
         """TODO(alex): docstring"""
-
         robot_state = self.robot_mlp(robot_state)
         human_state = self.human_mlp(human_state)
         # Concatenate the state tensors together
@@ -125,18 +124,21 @@ class PredictionNetwork(nn.Module):
         """TODO(alex): docstring"""
         super().__init__()
         self.action_predictor = mlp(
-            [input_state_dim, 16, 16, action_space_size]
+            [input_state_dim, 32]
+        )
+        self.avg = nn.AdaptiveAvgPool1d(1)
+        self.action_head = nn.Sequential(
+            nn.Linear(32, 2, bias=False),
+            nn.Tanh(),
         )
 
     def forward(
         self, embedded_state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """TODO(alex): docstring"""
-        policy_logits = self.action_predictor(embedded_state)
+        policy_logits = self.avg(self.action_predictor(embedded_state)).squeeze(-1)
         bsz = policy_logits.shape[0]
-
-        return policy_logits.view(bsz, -1).softmax(-1)
-
+        return self.action_head(policy_logits)
 
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
@@ -148,8 +150,9 @@ class DynamicsNetwork(torch.nn.Module):
     ):
         """TODO(alex): docstring"""
         super().__init__()
-        self.mlp = mlp([num_channels, 16, 16, full_support_size])
+        self.avg = nn.AdaptiveAvgPool1d(1)
+        self.mlp = mlp([num_channels, 32, 32, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""
-        return self.mlp(x.view(x.size(0), -1, 1))
+        return self.avg(self.mlp(x)).squeeze(-1)

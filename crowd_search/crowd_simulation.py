@@ -67,11 +67,12 @@ class CrowdSim(gym.Env):
 
         return self_str
 
-    def _generate_human(self) -> agents.Human:
+    def _generate_human(self, human = None) -> agents.Human:
         """Generate a circular blob representing a human."""
 
-        # Create initial human agent.
-        human = agents.Human(self.human_cfg)
+        if human is None:
+            # Create initial human agent.
+            human = agents.Human(self.human_cfg)
 
         # Generate random human attributes and make sure the human does not
         # collide with any of the existing humans or robot.
@@ -100,8 +101,8 @@ class CrowdSim(gym.Env):
             position_y=positiony,
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=-positionx,
-            goal_position_y=-positiony,
+            goal_position_x=random.uniform(-self.world_width, self.world_width),
+            goal_position_y=random.uniform(-self.world_height, self.world_height),
             direction=0.0,
         )
         return human
@@ -115,15 +116,15 @@ class CrowdSim(gym.Env):
 
         pos = [0, 0]
         while True:
-            x = random.uniform(-2, 2)
-            if -1 <= x <= 1:
+            x = random.uniform(-self.world_width, self.world_width)
+            if -3 <= x <= 3:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
-            y = random.uniform(-2, 2)
-            if -1 <= y <= 1:
+            y = random.uniform(-self.world_height,self.world_height)
+            if -3 <= y <= 3:
                 continue
             else:
                 pos[1] = y
@@ -135,12 +136,8 @@ class CrowdSim(gym.Env):
             position_y=pos[1],
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=random.uniform(
-                -self.goal_location_width, self.goal_location_width
-            ),
-            goal_position_y=random.uniform(
-                -self.goal_location_height, self.goal_location_height
-            ),
+            goal_position_x=random.uniform(-2, 2),
+            goal_position_y=random.uniform(-2, 2),
             direction=0.0,
         )
         # Generate the humans.
@@ -197,19 +194,16 @@ class CrowdSim(gym.Env):
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
         # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
         # further_away = dist_to_goal_fut > dist_to_goal_now
-        """
+        
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
-            # action_info = info.Timeout()
         elif collision:
             reward = self.collision_penalty
             done = True
-            # action_info = info.Collision()
         elif reaching_goal:
             reward = self.success_reward
             done = True
-            # action_info = info.ReachGoal()
         elif dmin < self.discomfort_dist:
             # adjust the reward based on FPS
             reward = (
@@ -218,20 +212,8 @@ class CrowdSim(gym.Env):
                 * self.time_step
             )
             done = False
-            # action_info = info.Discomfort(dmin)
         else:
-            reward = -0.0
-            done = False
-            # action_info = info.Nothing()
-        """
-        if self.global_time >= self.time_limit - 1:
-            reward = 0
-            done = True
-        elif reaching_goal:
-            reward = self.success_reward
-            done = True
-        else:
-            reward = -0.01 #(1 / dist_to_goal_fut).clamp(0.0, 0.5)
+            reward = 0.0
             done = False
 
         # update all agents
@@ -239,8 +221,9 @@ class CrowdSim(gym.Env):
 
         for human, human_action in zip(self.humans, human_actions):
             human.step(human_action, self.time_step)
-            # if human.reached_destination():
-            #    self._generate_human(human)
+
+            if human.reached_destination():
+                self._generate_human(human)
 
         self.global_time += self.time_step
         robot_observation = self.collate_robot_observation()
@@ -249,7 +232,7 @@ class CrowdSim(gym.Env):
     def collate_robot_observation(self):
         """The robot observation consists of the observable states of all other
         entities in the simulation."""
-
+        
         return torch.stack([human.get_observable_state() for human in self.humans])
 
     def legal_actions(self):

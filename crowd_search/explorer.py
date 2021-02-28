@@ -11,6 +11,7 @@ from torch.distributed import rpc
 from crowd_search import agents
 from crowd_search import policy
 from crowd_search import ppo
+from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
 
 class Explorer:
@@ -77,8 +78,9 @@ class Explorer:
                 action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )
+                #action = action
                 observation, reward, simulation_done = self.environment.step(
-                    self.policy.action_space[action]
+                    ActionXY(action[0, 0], action[0, 1])
                 )
                 game_history.reward_history.append(copy.deepcopy(reward))
                 game_history.action_history.append(copy.deepcopy(action))
