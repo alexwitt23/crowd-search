@@ -25,11 +25,11 @@ class Dataset(data.Dataset):
         self.actions = []
         self.rewards = []
         self.logprobs = []
-        self.num_examples = 20000
+        self.num_examples = 5000
 
     def __len__(self) -> int:
         """Return length of the dataset."""
-
+        assert len(self.robot_states) == len(self.human_states) == len(self.actions) == len(self.rewards) == len(self.logprobs)
         return len(self.robot_states)
 
     def __getitem__(self, idx: int):
@@ -40,7 +40,7 @@ class Dataset(data.Dataset):
             "robot_states": self.robot_states[idx],
             "human_states": self.human_states[idx],
             "action": float(self.actions[idx]),
-            "reward": self.rewards[idx].item(),
+            "reward": self.rewards[idx],
             "logprobs": self.logprobs[idx].item(),
         }
 
@@ -63,7 +63,7 @@ class Dataset(data.Dataset):
         self.robot_states.extend(robot_states)
         self.human_states.extend(human_states)
         self.actions.extend(game_history.action_history)
-        self.rewards.extend(rewards)
+        self.rewards.extend(rewards.tolist())
         self.logprobs.extend(game_history.logprobs)
 
         self.check_length()

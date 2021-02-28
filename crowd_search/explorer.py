@@ -54,6 +54,7 @@ class Explorer:
         while new_policy is None:
             new_policy = self.storage_node.rpc_sync().get_policy()
         self.policy.load_state_dict(new_policy.state_dict())
+        self.policy.eval()
 
     @torch.no_grad()
     def run_continuous_episode(self):
@@ -83,7 +84,6 @@ class Explorer:
                 game_history.action_history.append(copy.deepcopy(action))
                 game_history.logprobs.append(copy.deepcopy(action_log_prob))
 
-            game_history.logprobs.insert(0, torch.zeros_like(action_log_prob))
 
             self.send_history(game_history)
             self._update_policy()

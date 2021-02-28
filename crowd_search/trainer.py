@@ -53,6 +53,7 @@ class Trainer:
         self.run_dir = run_dir
         run_dir.mkdir(parents=True, exist_ok=True)
         self.eps_clip = 0.2
+        self.num_episodes = 0
 
         # If main node, create a logger
         self.is_main = False
@@ -146,6 +147,7 @@ class Trainer:
                 "explorer/max_reward", numpy.sum(max_rewards), self.global_step
             )
             self.logger.add_scalar("explorer/avg_sim_time", sim_time, self.global_step)
+            self.logger.add_scalar("explorer/num_episodes", self.num_episodes, self.global_step)
 
     def _combine_datasets(self, histories: List):
         """Called after new history is acquired from local storage node. We want to
@@ -159,6 +161,7 @@ class Trainer:
                 histories.extend(history)
 
         for history in histories:
+            self.num_episodes += 1
             self.dataset.update(history)
 
         if self.is_main:
@@ -195,7 +198,7 @@ class Trainer:
                 sampler=sampler,
                 collate_fn=dataset.collate,
             )
-            for mini_epoch in range(4):
+            for mini_epoch in range(50):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:

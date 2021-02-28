@@ -13,7 +13,7 @@ training:
   # The number separate processes for exploring the environment _per learner node_.
   num-explorers: 2
   # The batch size on one training node (the same for all trainers)
-  batch-size: 1024
+  batch-size: 40
 
 mu-zero:
   # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
@@ -113,8 +113,7 @@ robot:
   policy: None
   # Radius of circular region around robot. Used to determine collisions.
   radius: *robot_radius
-  # The velocity human wants to accelerate to reach.
-  preferred-velocity: 2.0
+  preferred-velocity: 1.0
 
 # D-step planning used to predict value of potential states. These parameters
 # define the space to sample for values. The total action space will be 
@@ -135,7 +134,7 @@ models:
     # The dimension of the robot's state. The 9 values are:
     # [pos_x, pos_y, vel_x, vel_y, direction,
     # target_x, target_y, radius, preferred-velocity]
-    robot-state-dimension: 9
+    robot-state-dimension: 2
     # The dimension of a human's observable state. The 5 values are:
     # pos_x, pos_y, vel_x, vel_y, direction.
     human-state-dimension: 5

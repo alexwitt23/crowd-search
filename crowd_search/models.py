@@ -125,9 +125,8 @@ class PredictionNetwork(nn.Module):
         """TODO(alex): docstring"""
         super().__init__()
         self.action_predictor = mlp(
-            [input_state_dim, 2 * input_state_dim, 2 * input_state_dim, action_space_size,]
+            [input_state_dim, 16, 16, action_space_size]
         )
-        self.test = nn.Linear(action_space_size * 2, action_space_size)
 
     def forward(
         self, embedded_state: torch.Tensor
@@ -136,7 +135,7 @@ class PredictionNetwork(nn.Module):
         policy_logits = self.action_predictor(embedded_state)
         bsz = policy_logits.shape[0]
 
-        return self.test(policy_logits.view(bsz, -1)).softmax(-1)
+        return policy_logits.view(bsz, -1).softmax(-1)
 
 
 # Similar to:
@@ -149,7 +148,7 @@ class DynamicsNetwork(torch.nn.Module):
     ):
         """TODO(alex): docstring"""
         super().__init__()
-        self.mlp = mlp([num_channels * 2, num_channels * 2, num_channels * 2, full_support_size])
+        self.mlp = mlp([num_channels, 16, 16, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""

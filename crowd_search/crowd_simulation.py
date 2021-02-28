@@ -112,9 +112,27 @@ class CrowdSim(gym.Env):
 
         self.global_time = 0
         # TODO(alex): Do better state checking
+
+        pos = [0, 0]
+        while True:
+            x = random.uniform(-2, 2)
+            if -1 <= x <= 1:
+                continue
+            else:
+                pos[0] = x
+                break
+        while True:
+            y = random.uniform(-2, 2)
+            if -1 <= y <= 1:
+                continue
+            else:
+                pos[1] = y
+                break
+
+         
         self.robot.set_state(
-            position_x=2,
-            position_y=2,
+            position_x=pos[0],
+            position_y=pos[1],
             velocity_x=0.0,
             velocity_y=0.0,
             goal_position_x=random.uniform(
@@ -213,7 +231,7 @@ class CrowdSim(gym.Env):
             reward = self.success_reward
             done = True
         else:
-            reward = (1 / dist_to_goal_fut).clamp(0.0, 0.5)
+            reward = -0.01 #(1 / dist_to_goal_fut).clamp(0.0, 0.5)
             done = False
 
         # update all agents

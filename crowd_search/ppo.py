@@ -49,35 +49,34 @@ class PPO(nn.Module):
         self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
         # TODO(alex): replace with stacked observations
         self.action_predictor = models.PredictionNetwork(
-            action_space_size=self.action_space_size, input_state_dim=32,
+            action_space_size=self.action_space_size, input_state_dim=4,
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_reward_network = models.DynamicsNetwork(32, 1)
+        self.dynamics_reward_network = models.DynamicsNetwork(4, 1)
 
     def forward(self):
         raise NotImplementedError
 
     @torch.no_grad()
     def act(self, robot_state: torch.Tensor, human_states: torch.Tensor):
-
-        encoded_state = self.gnn(robot_state, human_states)
-        policy_logits = self.action_predictor(encoded_state)
+        #encoded_state = self.gnn(robot_state, human_states)
+        policy_logits = self.action_predictor(robot_state)
         dist = distributions.Categorical(policy_logits)
         action = dist.sample()
+
         return action, dist.log_prob(action)
 
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
 
-        encoded_state = self.gnn(robot_state, human_states)
-        policy_logits = self.action_predictor(encoded_state)
+        #encoded_state = self.gnn(robot_state, human_states)
+        policy_logits = self.action_predictor(robot_state)
         dist = distributions.Categorical(policy_logits)
-
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
 
-        state_value = self.dynamics_reward_network(encoded_state)
+        state_value = self.dynamics_reward_network(robot_state)
 
         return action_logprobs, state_value.squeeze(-1), dist_entropy
 

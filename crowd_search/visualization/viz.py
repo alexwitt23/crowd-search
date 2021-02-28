@@ -23,8 +23,8 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
         color="red",
     )
     ax.plot(
-        [robot_state[0, 4].item()],
-        [robot_state[0, 5].item()],
+        [robot_state[0, 2].item()],
+        [robot_state[0, 3].item()],
         marker="o",
         markersize=3,
         color="green",

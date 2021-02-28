@@ -166,3 +166,10 @@ class Robot(Agent):
         self.state_tensor[1] = pos[1]
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
+
+    def get_full_state(self) -> torch.Tensor:
+        """Get agent's full state. Unsqueeze to add dimension for 'agents'.
+        """
+        return torch.Tensor(
+            [self.state_tensor[0], self.state_tensor[1], self.state_tensor[4], self.state_tensor[5]]
+        ).unsqueeze(0)
