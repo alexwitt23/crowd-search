@@ -4,6 +4,8 @@
 import argparse
 import datetime
 import pathlib
+import shutil
+import tempfile
 from typing import List
 
 import torch
@@ -16,6 +18,7 @@ from crowd_search import trainer
 
 _LOG_DIR = pathlib.Path("~/runs/crowd-search").expanduser()
 torch.set_num_threads(1)
+
 
 def _get_learner_explorers(
     learner_rank: int, num_explorers: int, num_learners: int
@@ -30,7 +33,12 @@ def _get_learner_explorers(
 
 
 def train(
-    local_rank: int, cfg: dict, num_learners: int, num_explorers: int, world_size: int
+    local_rank: int,
+    cfg: dict,
+    num_learners: int,
+    num_explorers: int,
+    world_size: int,
+    cache_dir: pathlib.Path
 ) -> None:
     """Main entrypoint function
 
@@ -65,8 +73,9 @@ def train(
         for learner_rank in range(num_learners)
     }
     rpc_backend_options = rpc.TensorPipeRpcBackendOptions(
-        init_method="tcp://localhost:29501", rpc_timeout=2400
+        init_method="tcp://localhost:29501", rpc_timeout=300
     )
+
     if not is_explorer and not is_shared_storage:
         storage_node = num_learners + num_learners * num_explorers + local_rank
         # Create process to distributed model training across trainer processes.
@@ -93,6 +102,7 @@ def train(
             / datetime.datetime.now().isoformat().split(".")[0].replace(":", "."),
             batch_size=cfg["training"]["batch-size"],
             storage_node=storage_node,
+            cache_dir=cache_dir,
         )
         trainer_node.continous_train()
     elif is_shared_storage:
@@ -132,9 +142,15 @@ if __name__ == "__main__":
 
     world_size = num_learners * num_explorers + num_learners + num_learners
 
-    multiprocessing.spawn(
-        train,
-        (cfg, num_learners, num_explorers, world_size),
-        nprocs=world_size,
-        join=True,
-    )
+    cache_dir = tempfile.TemporaryDirectory().name
+    cache_dir = pathlib.Path(cache_dir)
+    cache_dir.mkdir(exist_ok=True)
+    try:
+        multiprocessing.spawn(
+            train,
+            (cfg, num_learners, num_explorers, world_size, cache_dir),
+            nprocs=world_size,
+            join=True,
+        )
+    finally:
+        shutil.rmtree(cache_dir)

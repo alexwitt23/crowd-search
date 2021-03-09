@@ -56,7 +56,8 @@ class CrowdSim(gym.Env):
         self.motion_planner = environment.ORCA(motion_planner_cfg)
 
     def __str__(self) -> str:
-        """Print a verbal description of the simulation environment."""
+        """Print a verbal description of the simulation environment. Can be helpful
+        for debugging."""
         self_str = f"number of humans: {self.human_num}\n"
         self_str += f"time limit: {self.time_limit}\n"
         self_str += f"time step: {self.time_step}\n"
@@ -67,11 +68,17 @@ class CrowdSim(gym.Env):
 
         return self_str
 
-    def _generate_human(self, human = None) -> agents.Human:
-        """Generate a circular blob representing a human."""
+    def _generate_human(self, human: agents.Human = None) -> agents.Human:
+        """Generate a circular blob representing a human.
+        
+        If a human is passed in, its state is reset. A human is typically passed
+        in when an episode is ongoing but the human has reached its destination.
+        The human is given a goal at a random location anywhere within the world
+        specified in the config.yaml
+        """
 
+        # Create initial human agent.
         if human is None:
-            # Create initial human agent.
             human = agents.Human(self.human_cfg)
 
         # Generate random human attributes and make sure the human does not
@@ -83,19 +90,17 @@ class CrowdSim(gym.Env):
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
                 )
-                if (
-                    torch.norm(
-                        torch.Tensor([positionx, positiony]) - agent.get_position()
-                    )
-                    < min_dist
-                ):
+                position = torch.Tensor([positionx, positiony])
+                if torch.norm(position - agent.get_position()) < min_dist:
                     # Collide, generate another human
                     break
             else:
-                # No collision, set this human state.
+                # No collision with any other human or robot, set this human state.
                 break
 
-        # TODO(alex): Do we want more complicated motion for the humans?
+        # TODO(alex): Do we want more fine-grained control over human motion like
+        # specifying the goal position?
+        # TODO(alex): Make sure velocity (0,0) is ok.
         human.set_state(
             position_x=positionx,
             position_y=positiony,
@@ -117,27 +122,26 @@ class CrowdSim(gym.Env):
         pos = [0, 0]
         while True:
             x = random.uniform(-self.world_width, self.world_width)
-            if -3 <= x <= 3:
+            if -1 <= x <= 1:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
-            y = random.uniform(-self.world_height,self.world_height)
-            if -3 <= y <= 3:
+            y = random.uniform(-self.world_height, self.world_height)
+            if -1 <= y <= 1:
                 continue
             else:
                 pos[1] = y
                 break
 
-         
         self.robot.set_state(
             position_x=pos[0],
             position_y=pos[1],
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=random.uniform(-2, 2),
-            goal_position_y=random.uniform(-2, 2),
+            goal_position_x=0,
+            goal_position_y=0,
             direction=0.0,
         )
         # Generate the humans.
@@ -194,7 +198,7 @@ class CrowdSim(gym.Env):
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
         # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
         # further_away = dist_to_goal_fut > dist_to_goal_now
-        
+
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
@@ -213,7 +217,7 @@ class CrowdSim(gym.Env):
             )
             done = False
         else:
-            reward = 0.0
+            reward = -0.01
             done = False
 
         # update all agents
@@ -232,7 +236,7 @@ class CrowdSim(gym.Env):
     def collate_robot_observation(self):
         """The robot observation consists of the observable states of all other
         entities in the simulation."""
-        
+
         return torch.stack([human.get_observable_state() for human in self.humans])
 
     def legal_actions(self):

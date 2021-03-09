@@ -15,27 +15,6 @@ training:
   # The batch size on one training node (the same for all trainers)
   batch-size: 2000
 
-mu-zero:
-  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
-  # of -support_size to support_size. Choose it so that
-  # support_size <= sqrt(max(abs(discounted reward)))
-  support-size: 10
-  root-dirichlet-alpha: 0.25
-  root-exploration-fraction: 0.25
-  num-simulations: 50
-  stacked-observations: 32
-  pb-c-base: 19652
-  pb-c-init: 1.25
-  players: [0]
-  # Chronological discount of the reward
-  discount: 0.999
-  # Number of steps in the future to take into account for calculating the target value
-  td-steps: 30
-  PER: True
-  PER-alpha: 1.0
-  num-unroll-steps: 10
-  value-loss-weight: 0.25
-
 
 # These are params sent to the crowd_sim environment
 sim-environment:
@@ -44,10 +23,10 @@ sim-environment:
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
-  num-humans: 10
+  num-humans: 1
   
-  world-width: 20.0
-  world-height: 20.0
+  world-width: 6.0
+  world-height: 6.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
   goal-location-width: 0.0
@@ -140,9 +119,9 @@ models:
     human-state-dimension: 5
     # The human and robot states are passed through a MLP to get equal output channels.
     # The last dimension here is used as the node channel depth in the graph network.
-    mlp-layer-channels: [32, *output-dim]
+    mlp-layer-channels: [32, 32, *output-dim]
     # The number of layers in the graph model.
-    gnn-layers: 2
+    gnn-layers: 6
   
   state-net:
     time-step: *time_step

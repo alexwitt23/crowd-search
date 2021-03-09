@@ -98,7 +98,7 @@ class GNN(nn.Module):
 
         self.attn_layers = nn.ModuleList(
             [
-                AttentionalPropagation(mlp_layer_channels[-1], 4)
+                AttentionalPropagation(mlp_layer_channels[-1], 2)
                 for _ in range(num_attention_layers)
             ]
         )
@@ -123,14 +123,9 @@ class PredictionNetwork(nn.Module):
     def __init__(self, action_space_size: int, input_state_dim: int) -> None:
         """TODO(alex): docstring"""
         super().__init__()
-        self.action_predictor = mlp(
-            [input_state_dim, 32]
-        )
+        self.action_predictor = mlp([input_state_dim, 32, 32, 32])
         self.avg = nn.AdaptiveAvgPool1d(1)
-        self.action_head = nn.Sequential(
-            nn.Linear(32, 2, bias=False),
-            nn.Tanh(),
-        )
+        self.action_head = nn.Sequential(nn.Linear(32, 2, bias=False), nn.Tanh())
 
     def forward(
         self, embedded_state: torch.Tensor
@@ -139,6 +134,7 @@ class PredictionNetwork(nn.Module):
         policy_logits = self.avg(self.action_predictor(embedded_state)).squeeze(-1)
         bsz = policy_logits.shape[0]
         return self.action_head(policy_logits)
+
 
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
@@ -151,7 +147,7 @@ class DynamicsNetwork(torch.nn.Module):
         """TODO(alex): docstring"""
         super().__init__()
         self.avg = nn.AdaptiveAvgPool1d(1)
-        self.mlp = mlp([num_channels, 32, 32, full_support_size])
+        self.mlp = mlp([num_channels, 32, 32, 32, 32, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""

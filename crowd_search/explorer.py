@@ -44,8 +44,6 @@ class Explorer:
             cfg.get("action-space"),
             "cpu",
         )
-        self.config = cfg.get("mu-zero")
-        self.config["action-space"] = self.environment.legal_actions()
         self.storage_node = storage_node
         self._update_policy()
         self.run_continuous_episode()
@@ -78,14 +76,13 @@ class Explorer:
                 action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )
-                #action = action
+                # action = action
                 observation, reward, simulation_done = self.environment.step(
                     ActionXY(action[0, 0], action[0, 1])
                 )
                 game_history.reward_history.append(copy.deepcopy(reward))
                 game_history.action_history.append(copy.deepcopy(action))
                 game_history.logprobs.append(copy.deepcopy(action_log_prob))
-
 
             self.send_history(game_history)
             self._update_policy()

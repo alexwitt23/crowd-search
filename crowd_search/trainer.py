@@ -12,7 +12,9 @@ The basic idea is the class that executes the training loops. It manages a few t
 import random
 import copy
 import pathlib
+import tempfile
 import time
+import uuid
 from typing import Dict, List
 
 import numpy
@@ -44,6 +46,7 @@ class Trainer:
         run_dir: pathlib.Path,
         batch_size: int,
         storage_node: int,
+        cache_dir: pathlib.Path,
     ) -> None:
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
@@ -55,7 +58,7 @@ class Trainer:
         run_dir.mkdir(parents=True, exist_ok=True)
         self.eps_clip = 0.2
         self.num_episodes = 0
-
+        self.incentives = cfg.get("incentives")
         # If main node, create a logger
         self.is_main = False
         if rank == 0:
@@ -93,14 +96,12 @@ class Trainer:
                     self.policy, device_ids=None, find_unused_parameters=True
                 )
 
-        cfg.get("mu-zero").update({"action-space": list(range(41))})
-        self.config = cfg.get("mu-zero")
-
         self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=5.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
+            self.policy.parameters(), lr=2.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
         )
         self.training_step = 0
-        self.dataset = dataset.Dataset(cfg.get("mu-zero"))
+        self.dataset = dataset.Dataset(cache_dir)
+        self.cache_dir = cache_dir
         self.explorer_references = []
 
         storage_info = rpc.get_worker_info(f"Storage:{storage_node}")
@@ -126,6 +127,7 @@ class Trainer:
         self.storage_node.rpc_sync().update_policy(model)
 
     def _get_history(self):
+
         new_history = []
         while not new_history:
             new_history = self.storage_node.rpc_sync().get_history()
@@ -134,11 +136,11 @@ class Trainer:
         self.storage_node.rpc_sync().clear_history()
         self._combine_datasets(new_history)
 
+        
         average_rewards = [
             numpy.mean(history.reward_history) for history in new_history
         ]
         max_rewards = [numpy.max(history.reward_history) for history in new_history]
-
         sim_time = numpy.mean([len(history.reward_history) for history in new_history])
         if self.is_main:
             self.logger.add_scalar(
@@ -148,44 +150,75 @@ class Trainer:
                 "explorer/max_reward", numpy.sum(max_rewards), self.global_step
             )
             self.logger.add_scalar("explorer/avg_sim_time", sim_time, self.global_step)
-            self.logger.add_scalar("explorer/num_episodes", self.num_episodes, self.global_step)
+
 
     def _combine_datasets(self, histories: List):
         """Called after new history is acquired from local storage node. We want to
         send all new history to each other trainer node."""
-        if distributed.is_initialized():
-            output = [None] * self.num_learners
-            distributed.all_gather_object(output, histories)
-
-            histories = []
-            for history in output:
-                histories.extend(history)
-
-        for history in histories:
-            self.num_episodes += 1
-            self.dataset.update(history)
 
         if self.is_main:
             reached_goal = []
+            collision = []
+            timeout = []
             for idx, history in enumerate(histories):
-                if 1 in history.reward_history:
+                if self.incentives.get("success") in history.reward_history:
                     reached_goal.append(idx)
-            
+                elif self.incentives.get("collision") in history.reward_history:
+                    collision.append(idx)
+                else:
+                    timeout.append(idx)
+
             if reached_goal:
                 idx = random.choice(reached_goal)
                 viz.plot_history(
-                    histories[idx], self.run_dir / f"plots/{self.global_step}.gif"
+                    histories[idx], self.run_dir / f"plots/{self.global_step}_s.gif"
                 )
-            else:
-                    viz.plot_history(
-                        random.choice(histories), self.run_dir / f"plots/{self.global_step}.gif"
-                    )
-            
+            if timeout:
+                idx = random.choice(timeout)
+                viz.plot_history(
+                    histories[idx], self.run_dir / f"plots/{self.global_step}_t.gif",
+                )
+            if collision:
+                idx = random.choice(collision)
+                viz.plot_history(
+                    histories[idx], self.run_dir / f"plots/{self.global_step}_c.gif",
+                )
+
             self.logger.add_scalar(
                 "explorer/success_frac",
                 len(reached_goal) / len(histories),
-                self.global_step
+                self.global_step,
             )
+            self.logger.add_scalar(
+                "explorer/collision_frac",
+                len(collision) / len(histories),
+                self.global_step,
+            )
+            self.logger.add_scalar(
+                "explorer/timeout_frac",
+                len(timeout) / len(histories),
+                self.global_step,
+            )
+
+            # Clear old data
+            for item in self.cache_dir.glob("*"):
+                item.unlink()
+
+        # If not main, wait until the cache dir is cleared
+        while True:
+            items = list(self.cache_dir.glob("*"))
+            if not items:
+                break
+
+        self.dataset.update(histories)
+        if distributed.is_initialized():
+            distributed.barrier()
+
+    def get_items(self):
+        if self.is_main:
+            self.dataset.items = list(self.cache_dir.glob("*"))
+        if distributed.is_initialized():
+            distributed.barrier()
 
     def continous_train(self) -> None:
         """Target function to call after intialization.
@@ -199,6 +232,9 @@ class Trainer:
             # Update memory from explorer workers
             if self.is_main:
                 print(f"Starting epoch {epoch}.")
+            
+            self.get_items()
+    
             if self.num_learners > 1:
                 sampler = data.distributed.DistributedSampler(
                     self.dataset, shuffle=True
@@ -213,7 +249,7 @@ class Trainer:
                 sampler=sampler,
                 collate_fn=dataset.collate,
             )
-            for mini_epoch in range(50):
+            for mini_epoch in range(5):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
@@ -254,17 +290,6 @@ class Trainer:
                         - 0.01 * dist_entropy
                     )
                     loss = loss.mean()
-
-                    if torch.isnan(loss):
-                        print(torch.isnan(logprobs).any())
-                        print(torch.isnan(logprobs_batch).any())
-                        print(torch.isnan(advantages).any())
-                        print(torch.isnan(surr1).any())
-                        print(torch.isnan(surr2).any())
-                        print(torch.isnan(dist_entropy).any())
-                        print(torch.isnan(state_values).any())
-                        print(torch.isnan(target_reward).any())
-                        raise ValueError("Loss is nan.")
 
                     # Optimize
                     self.optimizer.zero_grad()

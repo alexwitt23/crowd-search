@@ -138,8 +138,10 @@ class Human(Agent):
         return self.preferred_velocity
 
     def reached_destination(self) -> bool:
-        return torch.norm(self.get_goal_position() - self.get_position()) < self.get_radius()
-
+        return (
+            torch.norm(self.get_goal_position() - self.get_position())
+            < self.get_radius()
+        )
 
 
 class Robot(Agent):
@@ -176,5 +178,10 @@ class Robot(Agent):
         """Get agent's full state. Unsqueeze to add dimension for 'agents'.
         """
         return torch.Tensor(
-            [self.state_tensor[0], self.state_tensor[1], self.state_tensor[4], self.state_tensor[5]]
+            [
+                self.state_tensor[0],
+                self.state_tensor[1],
+                self.state_tensor[4],
+                self.state_tensor[5],
+            ]
         ).unsqueeze(0)
