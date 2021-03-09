@@ -23,8 +23,8 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
         color="red",
     )
     ax.plot(
-        [robot_state[0, 4].item()],
-        [robot_state[0, 5].item()],
+        [robot_state[0, 2].item()],
+        [robot_state[0, 3].item()],
         marker="o",
         markersize=3,
         color="green",
@@ -37,8 +37,8 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
             markersize=3,
             color="blue",
         )
-    ax.set_ylim(-3, 3)
-    ax.set_xlim(-3, 3)
+    ax.set_ylim(-10, 10)
+    ax.set_xlim(-10, 10)
     fig.canvas.draw()
     image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
@@ -54,7 +54,8 @@ def plot_history(game_history, save_path: pathlib.Path):
         [
             plot_state(idx, robot_state, human_states)
             for idx, (robot_state, human_states) in enumerate(
-                game_history.observation_history)
+                game_history.observation_history
+            )
         ],
-        fps=15
+        fps=15,
     )

@@ -11,43 +11,22 @@ training:
   # doing all CPU training.
   num-learners: 2
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 8
+  num-explorers: 4
   # The batch size on one training node (the same for all trainers)
-  batch-size: 50
-
-mu-zero:
-  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range
-  # of -support_size to support_size. Choose it so that
-  # support_size <= sqrt(max(abs(discounted reward)))
-  support-size: 10
-  root-dirichlet-alpha: 0.25
-  root-exploration-fraction: 0.25
-  num-simulations: 50
-  stacked-observations: 32
-  pb-c-base: 19652
-  pb-c-init: 1.25
-  players: [0]
-  # Chronological discount of the reward
-  discount: 0.999
-  # Number of steps in the future to take into account for calculating the target value
-  td-steps: 30
-  PER: True
-  PER-alpha: 1.0
-  num-unroll-steps: 10
-  value-loss-weight: 0.25
+  batch-size: 2000
 
 
 # These are params sent to the crowd_sim environment
 sim-environment:
   # How long to give robot to reach goal. If reached, this constitutes a timeout.
-  time-limit: 120
+  time-limit: 60
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
   num-humans: 1
   
-  world-width: 3
-  world-height: 3
+  world-width: 6.0
+  world-height: 6.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
   goal-location-width: 0.0
@@ -113,8 +92,7 @@ robot:
   policy: None
   # Radius of circular region around robot. Used to determine collisions.
   radius: *robot_radius
-  # The velocity human wants to accelerate to reach.
-  preferred-velocity: 2.0
+  preferred-velocity: 1.0
 
 # D-step planning used to predict value of potential states. These parameters
 # define the space to sample for values. The total action space will be 
@@ -135,15 +113,15 @@ models:
     # The dimension of the robot's state. The 9 values are:
     # [pos_x, pos_y, vel_x, vel_y, direction,
     # target_x, target_y, radius, preferred-velocity]
-    robot-state-dimension: 9
+    robot-state-dimension: 4
     # The dimension of a human's observable state. The 5 values are:
     # pos_x, pos_y, vel_x, vel_y, direction.
     human-state-dimension: 5
     # The human and robot states are passed through a MLP to get equal output channels.
     # The last dimension here is used as the node channel depth in the graph network.
-    mlp-layer-channels: [32, *output-dim]
+    mlp-layer-channels: [32, 32, *output-dim]
     # The number of layers in the graph model.
-    gnn-layers: 4
+    gnn-layers: 6
   
   state-net:
     time-step: *time_step

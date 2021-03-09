@@ -32,7 +32,7 @@ The docker container assumes you have a CUDA compatible GPU device. Build
 it like so:
 
 ```bash
-    make image
+make image
 ```
 
 You can run the docker container with the command below. Note, this will
@@ -45,11 +45,22 @@ make run
 
 ## Training
 
+Review the training config in `crowd_search/config.yaml`. When ready to train, run:
+```bash
+PYTHONPATH=. crowd_search/train_distributed.py 
+```
+
+To then visualize the results of your runs, use TensorBoard:
 
 ```bash
-    PYTHONPATH=. crowd_search/train_distributed.py 
-    tensorboard --logdir=~/runs/crowd-search
+tensorboard --logdir=~/runs/crowd-search
 ```
+
+Each training run is timestamped and saved to `~/runs/crowd-search`.
+
+To stop training, run `Ctrl + C`. Note, due to the distributed nature of the training
+script, some nodes might hang. You might have to look for the running PIDs
+(using `htop` for example) and `kill -9` the process.
 
 
 ## Testing
@@ -59,11 +70,4 @@ PY_IGNORE_IMPORTMISMATCH=1 pytest -s --doctest-modules --ignore="third_party"
 
 ## TODO
 
-- [ ] Make one central module / functions for rewards. Right now rewards are split
-between simulation environments and policies.
-
-- [ ] Visualizations of simulations
-
-- [ ] Look to use socialforce human model
-
-- [ ] Look to use ideas from MuZero's MCTS
+- [ ] Make todo list

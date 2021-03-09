@@ -98,14 +98,13 @@ class GNN(nn.Module):
 
         self.attn_layers = nn.ModuleList(
             [
-                AttentionalPropagation(mlp_layer_channels[-1], 4)
+                AttentionalPropagation(mlp_layer_channels[-1], 2)
                 for _ in range(num_attention_layers)
             ]
         )
 
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
         """TODO(alex): docstring"""
-
         robot_state = self.robot_mlp(robot_state)
         human_state = self.human_mlp(human_state)
         # Concatenate the state tensors together
@@ -124,31 +123,17 @@ class PredictionNetwork(nn.Module):
     def __init__(self, action_space_size: int, input_state_dim: int) -> None:
         """TODO(alex): docstring"""
         super().__init__()
-        self.action_predictor = mlp(
-            [
-                input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                2 * input_state_dim,
-                action_space_size,
-            ]
-        )
-        self.value_estimator = mlp(
-            [input_state_dim, input_state_dim, input_state_dim]
-        )
-        self.test = nn.Linear(action_space_size * 2 * input_state_dim, action_space_size)
-        self.v = nn.Linear(input_state_dim * 2 * input_state_dim, 21)
+        self.action_predictor = mlp([input_state_dim, 32, 32, 32])
+        self.avg = nn.AdaptiveAvgPool1d(1)
+        self.action_head = nn.Sequential(nn.Linear(32, 2, bias=False), nn.Tanh())
 
     def forward(
         self, embedded_state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """TODO(alex): docstring"""
-        policy_logits = self.action_predictor(embedded_state)
-        value = self.value_estimator(embedded_state)
+        policy_logits = self.avg(self.action_predictor(embedded_state)).squeeze(-1)
         bsz = policy_logits.shape[0]
-
-        return self.test(policy_logits.view(bsz, -1)), self.v(value.view(bsz, -1))
+        return self.action_head(policy_logits)
 
 
 # Similar to:
@@ -161,8 +146,9 @@ class DynamicsNetwork(torch.nn.Module):
     ):
         """TODO(alex): docstring"""
         super().__init__()
-        self.mlp = mlp([num_channels, full_support_size])
+        self.avg = nn.AdaptiveAvgPool1d(1)
+        self.mlp = mlp([num_channels, 32, 32, 32, 32, full_support_size])
 
     def forward(self, x):
         """Takes in a concatenated state embedding and action logits"""
-        return self.mlp(x)
+        return self.avg(self.mlp(x)).squeeze(-1)

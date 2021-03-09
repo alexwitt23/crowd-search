@@ -137,6 +137,12 @@ class Human(Agent):
     def get_preferred_velocity(self) -> float:
         return self.preferred_velocity
 
+    def reached_destination(self) -> bool:
+        return (
+            torch.norm(self.get_goal_position() - self.get_position())
+            < self.get_radius()
+        )
+
 
 class Robot(Agent):
     """This class is very similar to the Human class."""
@@ -156,6 +162,7 @@ class Robot(Agent):
         self, action: agent_actions.ActionXY, time_step: float
     ) -> torch.Tensor:
         """Take an action (velocity vector) and timestep and return the new position."""
+
         pos = self.get_position() + torch.Tensor([action.vx, action.vy]) * time_step
         return pos
 
@@ -166,3 +173,15 @@ class Robot(Agent):
         self.state_tensor[1] = pos[1]
         self.state_tensor[2] = action.vx
         self.state_tensor[3] = action.vy
+
+    def get_full_state(self) -> torch.Tensor:
+        """Get agent's full state. Unsqueeze to add dimension for 'agents'.
+        """
+        return torch.Tensor(
+            [
+                self.state_tensor[0],
+                self.state_tensor[1],
+                self.state_tensor[4],
+                self.state_tensor[5],
+            ]
+        ).unsqueeze(0)
