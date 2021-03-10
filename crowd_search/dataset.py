@@ -4,7 +4,8 @@ which allows us to batch together the different collections of input data."""
 
 import copy
 import pathlib
-from typing import List, Tuple
+import time
+from typing import Dict, List, Tuple
 import uuid
 
 import numpy
@@ -21,7 +22,6 @@ class Dataset(data.Dataset):
         super().__init__()
 
         self.gamma = 0.99
-        self.num_examples = 5000
         self.save_dir = save_dir
         self.items = []
 
@@ -32,56 +32,18 @@ class Dataset(data.Dataset):
     def __getitem__(self, idx: int):
         """Retrieve an item from the dataset and prepare it for training."""
         # Retrieve the game from the list of available games.
-        item = torch.load(self.items[idx], map_location="cpu")
-        return item
+        return torch.load(self.items[idx], map_location="cpu")
 
-    def update(self, game_histories: List[explorer.GameHistory]):
+    def update(self, game_histories: List[Dict[str, torch.Tensor]]):
         self.clear()
-        robot_states = []
-        human_states = []
-        actions = []
-        rewards = []
-        logprobs = []
         for game_history in game_histories:
-            game_history = copy.deepcopy(game_history)
-            discounted_rewards = []
-            discounted_reward = 0
-            for idx, reward in enumerate(reversed(game_history.reward_history)):
-                if idx == 0:
-                    discounted_reward = 0
-                discounted_reward = reward + (self.gamma * discounted_reward)
-                discounted_rewards.insert(0, discounted_reward)
-
-            reward = torch.tensor(discounted_rewards)
-            if len(discounted_rewards) > 1:
-                reward = (reward - reward.mean()) / (reward.std() + 1e-5)
-
-            # Stack all the robot states and human states
-            robot_states.extend(
-                [state[0] for state in game_history.observation_history]
-            )
-            human_states.extend(
-                [state[1] for state in game_history.observation_history]
-            )
-            actions.extend(game_history.action_history)
-            rewards.extend(reward)
-            logprobs.extend(game_history.logprobs)
-
-        for robot, human, action, reward, logprob in zip(
-            robot_states, human_states, actions, rewards, logprobs
-        ):
-            data = {
-                "robot_states": robot,
-                "human_states": human,
-                "action": action,
-                "reward": reward,
-                "logprobs": logprob,
-            }
-            torch.save(data, self.save_dir / f"{uuid.uuid4()}")
+            for data in game_history:
+                torch.save(data, self.save_dir / f"{uuid.uuid4()}")
 
     def clear(self):
         for item in self.save_dir.glob("*"):
             item.unlink()
+        time.sleep(3.0)
 
 
 def collate(batches):

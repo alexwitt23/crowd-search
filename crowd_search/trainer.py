@@ -14,7 +14,6 @@ import copy
 import pathlib
 import tempfile
 import time
-import uuid
 from typing import Dict, List
 
 import numpy
@@ -128,31 +127,44 @@ class Trainer:
 
     def _get_history(self):
 
-        new_history = []
-        while not new_history:
-            new_history = self.storage_node.rpc_sync().get_history()
-            time.sleep(1.0)
+        new_histories = []
+        while not new_histories:
+            (
+                new_histories,
+                mean_times,
+                success,
+                timeout,
+                collision,
+            ) = self.storage_node.rpc_sync().get_history()
+            time.sleep(2.0)
 
         self.storage_node.rpc_sync().clear_history()
-        self._combine_datasets(new_history)
 
-        
-        average_rewards = [
-            numpy.mean(history.reward_history) for history in new_history
-        ]
-        max_rewards = [numpy.max(history.reward_history) for history in new_history]
-        sim_time = numpy.mean([len(history.reward_history) for history in new_history])
+        datas = []
+        for history in new_histories:
+            for data in history:
+                datas.append(data["undiscounted_reward"])
+        average_rewards = torch.mean(torch.stack(datas))
+
         if self.is_main:
             self.logger.add_scalar(
-                "explorer/avg_reward", numpy.mean(average_rewards), self.global_step
+                "explorer/avg_reward", average_rewards, self.global_step
             )
             self.logger.add_scalar(
-                "explorer/max_reward", numpy.sum(max_rewards), self.global_step
+                "explorer/avg_sim_time", mean_times, self.global_step
             )
-            self.logger.add_scalar("explorer/avg_sim_time", sim_time, self.global_step)
+            self.logger.add_scalar(
+                "explorer/success_frac", success, self.global_step,
+            )
+            self.logger.add_scalar(
+                "explorer/collision_frac", collision, self.global_step,
+            )
+            self.logger.add_scalar(
+                "explorer/timeout_frac", timeout, self.global_step,
+            )
+        self._combine_datasets(new_histories)
 
-
-    def _combine_datasets(self, histories: List):
+    def _combine_datasets(self, histories: List[List[Dict[str, torch.Tensor]]]):
         """Called after new history is acquired from local storage node. We want to
         send all new history to each other trainer node."""
 
@@ -160,10 +172,11 @@ class Trainer:
             reached_goal = []
             collision = []
             timeout = []
+            
             for idx, history in enumerate(histories):
-                if self.incentives.get("success") in history.reward_history:
+                if self.incentives.get("success") == history[-1]["undiscounted_reward"].item():
                     reached_goal.append(idx)
-                elif self.incentives.get("collision") in history.reward_history:
+                elif self.incentives.get("collision") == history[-1]["undiscounted_reward"].item():
                     collision.append(idx)
                 else:
                     timeout.append(idx)
@@ -184,31 +197,18 @@ class Trainer:
                     histories[idx], self.run_dir / f"plots/{self.global_step}_c.gif",
                 )
 
-            self.logger.add_scalar(
-                "explorer/success_frac",
-                len(reached_goal) / len(histories),
-                self.global_step,
-            )
-            self.logger.add_scalar(
-                "explorer/collision_frac",
-                len(collision) / len(histories),
-                self.global_step,
-            )
-            self.logger.add_scalar(
-                "explorer/timeout_frac",
-                len(timeout) / len(histories),
-                self.global_step,
-            )
-
             # Clear old data
             for item in self.cache_dir.glob("*"):
                 item.unlink()
 
         # If not main, wait until the cache dir is cleared
-        while True:
-            items = list(self.cache_dir.glob("*"))
-            if not items:
-                break
+        if not self.is_main:
+            while True:
+                items = list(self.cache_dir.glob("*"))
+                if not items:
+                    break
+
+                time.sleep(1.0)
 
         self.dataset.update(histories)
         if distributed.is_initialized():
@@ -232,9 +232,9 @@ class Trainer:
             # Update memory from explorer workers
             if self.is_main:
                 print(f"Starting epoch {epoch}.")
-            
+
             self.get_items()
-    
+
             if self.num_learners > 1:
                 sampler = data.distributed.DistributedSampler(
                     self.dataset, shuffle=True
@@ -249,7 +249,7 @@ class Trainer:
                 sampler=sampler,
                 collate_fn=dataset.collate,
             )
-            for mini_epoch in range(5):
+            for mini_epoch in range(10):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
@@ -290,6 +290,25 @@ class Trainer:
                         - 0.01 * dist_entropy
                     )
                     loss = loss.mean()
+
+                    if torch.isnan(robot_state_batch).any():
+                        raise ValueError("robot_state_batch is nan")
+                    if torch.isnan(human_state_batch).any():
+                        raise ValueError("human_state_batch is nan")
+                    if torch.isnan(action_batch).any():
+                        raise ValueError("action_batch is nan")
+                    if torch.isnan(target_reward).any():
+                        raise ValueError("target_reward is nan")
+                    if torch.isnan(logprobs_batch).any():
+                        raise ValueError("logprobs_batch is nan")
+                    if torch.isnan(logprobs).any():
+                        raise ValueError("logprobs is nan")
+                    if torch.isnan(state_values).any():
+                        raise ValueError("state_values is nan")
+                    if torch.isnan(dist_entropy).any():
+                        raise ValueError("dist_entropy is nan")
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        raise ValueError("Loss blew up.")
 
                     # Optimize
                     self.optimizer.zero_grad()

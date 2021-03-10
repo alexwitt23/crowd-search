@@ -38,7 +38,7 @@ def train(
     num_learners: int,
     num_explorers: int,
     world_size: int,
-    cache_dir: pathlib.Path
+    cache_dir: pathlib.Path,
 ) -> None:
     """Main entrypoint function
 

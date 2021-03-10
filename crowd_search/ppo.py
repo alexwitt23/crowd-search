@@ -45,12 +45,7 @@ class PPO(nn.Module):
         self.rotation_samples = action_space_cfg.get("rotation-samples")
 
         self.v_pref = 1.0
-        self.build_action_space(self.v_pref)
-        self.action_space_size = (self.speed_samples * self.rotation_samples) + 1
-        # TODO(alex): replace with stacked observations
-        self.action_predictor = models.PredictionNetwork(
-            action_space_size=self.action_space_size, input_state_dim=32,
-        )
+        self.action_predictor = models.PredictionNetwork(input_state_dim=32)
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
@@ -68,7 +63,7 @@ class PPO(nn.Module):
         cov_mat = torch.diag(self.action_var).to(self.device)
         dist = distributions.MultivariateNormal(action_mean, cov_mat)
         action = dist.sample()
-        return action, dist.log_prob(action)
+        return action.clamp(-self.v_pref, self.v_pref), dist.log_prob(action)
 
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
 
@@ -84,24 +79,3 @@ class PPO(nn.Module):
         state_value = self.dynamics_reward_network(encoded_state)
         return action_logprobs, state_value.squeeze(-1), dist_entropy
 
-    def build_action_space(self, preferred_velocity: float):
-        """Given a desired number of speed and rotation samples, build the action
-        space available to the model."""
-
-        # Shift speeds to no 0.0 speed.
-        self.speeds = np.linspace(
-            0, preferred_velocity, self.speed_samples, endpoint=False
-        )
-        self.speeds += self.speeds[1]
-        self.rotations = np.linspace(
-            0, 2 * np.pi, self.rotation_samples, endpoint=False
-        )
-
-        # Add a stop action.
-        self.action_space = [ActionXY(0, 0)]
-
-        for speed in self.speeds:
-            for rotation in self.rotations:
-                self.action_space.append(
-                    ActionXY(speed * np.cos(rotation), speed * np.sin(rotation))
-                )

@@ -1,6 +1,7 @@
 """Explorer objects which maintain a copy of the environment."""
-import math
 import copy
+import math
+import time
 from typing import Dict, List
 
 import numpy
@@ -16,7 +17,7 @@ from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
 class Explorer:
     def __init__(self, cfg, storage_node) -> None:
-        """Initialize Explorer.z
+        """Initialize Explorer.
 
         Args:
             environment: The simulation environment to be explored.
@@ -52,7 +53,8 @@ class Explorer:
         new_policy = None
         while new_policy is None:
             new_policy = self.storage_node.rpc_sync().get_policy()
-        self.policy.load_state_dict(new_policy.state_dict())
+            time.sleep(2.0)
+        self.policy.load_state_dict(copy.deepcopy(new_policy.state_dict()))
         self.policy.eval()
 
     @torch.no_grad()
@@ -66,13 +68,12 @@ class Explorer:
             # information to replay memory.
             game_history = GameHistory()
             observation = copy.deepcopy(self.environment.reset())
-
+            
             # Loop over simulation steps until we are done. The simulation terminates
             # when the goal is reached or some timeout based on the number of steps.
             while not simulation_done:
-
                 robot_state = copy.deepcopy(self.environment.robot.get_full_state())
-                game_history.observation_history.append((robot_state, observation))
+                game_history.observation_history.append((robot_state, copy.deepcopy(observation)))
                 action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )
@@ -88,7 +89,7 @@ class Explorer:
             self._update_policy()
 
     def send_history(self, history):
-        self.storage_node.rpc_sync().upload_history(history)
+        self.storage_node.rpc_async().upload_history(history)
 
 
 class GameHistory:

@@ -84,8 +84,9 @@ class CrowdSim(gym.Env):
         # Generate random human attributes and make sure the human does not
         # collide with any of the existing humans or robot.
         while True:
-            positionx = random.uniform(-self.world_width, self.world_width)
-            positiony = random.uniform(-self.world_height, self.world_height)
+            positionx = round(random.uniform(-self.world_width, self.world_width), 5)
+            positiony = round(random.uniform(-self.world_height, self.world_height), 5)
+
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
@@ -106,8 +107,12 @@ class CrowdSim(gym.Env):
             position_y=positiony,
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=random.uniform(-self.world_width, self.world_width),
-            goal_position_y=random.uniform(-self.world_height, self.world_height),
+            goal_position_x=round(
+                random.uniform(-self.world_width, self.world_width), 5
+            ),
+            goal_position_y=round(
+                random.uniform(-self.world_height, self.world_height), 5
+            ),
             direction=0.0,
         )
         return human
@@ -121,27 +126,29 @@ class CrowdSim(gym.Env):
 
         pos = [0, 0]
         while True:
-            x = random.uniform(-self.world_width, self.world_width)
+            x = random.uniform(-self.world_width, -1)
             if -1 <= x <= 1:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
-            y = random.uniform(-self.world_height, self.world_height)
+            y = random.uniform(-self.world_height, -1)
             if -1 <= y <= 1:
                 continue
             else:
                 pos[1] = y
                 break
 
+        goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
+        goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
         self.robot.set_state(
-            position_x=pos[0],
-            position_y=pos[1],
+            position_x=round(pos[0], 5),
+            position_y=round(pos[1], 5),
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=0,
-            goal_position_y=0,
+            goal_position_x=round(goal_x, 5),
+            goal_position_y=round(goal_y, 5),
             direction=0.0,
         )
         # Generate the humans.
@@ -154,7 +161,6 @@ class CrowdSim(gym.Env):
 
         # Reset the human motion planner simulation.
         self.motion_planner.sim = None
-
         return robot_observation
 
     def step(
@@ -239,6 +245,7 @@ class CrowdSim(gym.Env):
 
         return torch.stack([human.get_observable_state() for human in self.humans])
 
+    # TODO(alex): Is this still needed since action space is continuous?
     def legal_actions(self):
         return list(range(41))
 

@@ -1,6 +1,7 @@
 """A library of functions for taking in a game history and plotting
 the results to a gif."""
 
+import collections
 import pathlib
 
 import imageio
@@ -48,13 +49,15 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
 
 def plot_history(game_history, save_path: pathlib.Path):
     save_path.parent.mkdir(exist_ok=True, parents=True)
-    kwargs_write = {"fps": 15.0, "quantizer": "nq"}
+    robot_states = [state["robot_states"] for state in game_history]
+    human_states = [state["human_states"] for state in game_history]
+
     imageio.mimsave(
         str(save_path),
         [
             plot_state(idx, robot_state, human_states)
             for idx, (robot_state, human_states) in enumerate(
-                game_history.observation_history
+                zip(robot_states, human_states)
             )
         ],
         fps=15,
