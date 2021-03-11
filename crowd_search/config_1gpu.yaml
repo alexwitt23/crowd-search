@@ -94,16 +94,6 @@ robot:
   radius: *robot_radius
   preferred-velocity: 1.0
 
-# D-step planning used to predict value of potential states. These parameters
-# define the space to sample for values. The total action space will be 
-# speed-samples * rotation-samples + 1. The +1 is a standstill move.
-action-space:
-  # Define the kinematics equations used to update the position.
-  kinematics: "holonomic"
-  # The number of different speed samples to consider.
-  speed-samples: 5
-  # The number of rotation samples to consider.
-  rotation-samples: 8
 
 # Define the various models used during training.
 models:

@@ -70,7 +70,6 @@ class Trainer:
             cfg.get("robot"),
             cfg.get("human"),
             cfg.get("incentives"),
-            cfg.get("action-space"),
             device,
         )
         self.policy_old = ppo.PPO(
@@ -78,7 +77,6 @@ class Trainer:
             cfg.get("robot"),
             cfg.get("human"),
             cfg.get("incentives"),
-            cfg.get("action-space"),
             device,
         )
         self.policy_old.load_state_dict(self.policy.state_dict())
@@ -96,8 +94,9 @@ class Trainer:
                 )
 
         self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=2.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
+            self.policy.parameters(), lr=1.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
         )
+        self.epoch = 0
         self.training_step = 0
         self.dataset = dataset.Dataset(cache_dir)
         self.cache_dir = cache_dir
@@ -118,7 +117,6 @@ class Trainer:
         self.MseLoss = nn.MSELoss()
         # Update explorers with initial policy weights
         self._send_policy()
-        self._get_history()
 
     def _send_policy(self):
         model = copy.deepcopy(distributed_utils.unwrap_ddp(self.policy_old))
@@ -172,11 +170,17 @@ class Trainer:
             reached_goal = []
             collision = []
             timeout = []
-            
+
             for idx, history in enumerate(histories):
-                if self.incentives.get("success") == history[-1]["undiscounted_reward"].item():
+                if (
+                    self.incentives.get("success")
+                    == history[-1]["undiscounted_reward"].item()
+                ):
                     reached_goal.append(idx)
-                elif self.incentives.get("collision") == history[-1]["undiscounted_reward"].item():
+                elif (
+                    self.incentives.get("collision")
+                    == history[-1]["undiscounted_reward"].item()
+                ):
                     collision.append(idx)
                 else:
                     timeout.append(idx)
@@ -197,26 +201,12 @@ class Trainer:
                     histories[idx], self.run_dir / f"plots/{self.global_step}_c.gif",
                 )
 
-            # Clear old data
-            for item in self.cache_dir.glob("*"):
-                item.unlink()
-
-        # If not main, wait until the cache dir is cleared
-        if not self.is_main:
-            while True:
-                items = list(self.cache_dir.glob("*"))
-                if not items:
-                    break
-
-                time.sleep(1.0)
-
-        self.dataset.update(histories)
+        self.dataset.update(histories, self.epoch)
         if distributed.is_initialized():
             distributed.barrier()
 
     def get_items(self):
-        if self.is_main:
-            self.dataset.items = list(self.cache_dir.glob("*"))
+        self.dataset.prepare_for_epoch()
         if distributed.is_initialized():
             distributed.barrier()
 
@@ -229,6 +219,8 @@ class Trainer:
         weights."""
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
+            self.epoch = epoch
+            self._get_history()
             # Update memory from explorer workers
             if self.is_main:
                 print(f"Starting epoch {epoch}.")
@@ -330,5 +322,4 @@ class Trainer:
             self.policy_old.load_state_dict(
                 distributed_utils.unwrap_ddp(self.policy).state_dict()
             )
-            self._get_history()
             self._send_policy()

@@ -120,7 +120,7 @@ class GNN(nn.Module):
 class PredictionNetwork(nn.Module):
     """TODO(alex): docstring"""
 
-    def __init__(self, action_space_size: int, input_state_dim: int) -> None:
+    def __init__(self, input_state_dim: int) -> None:
         """TODO(alex): docstring"""
         super().__init__()
         self.action_predictor = mlp([input_state_dim, 32, 32, 32])

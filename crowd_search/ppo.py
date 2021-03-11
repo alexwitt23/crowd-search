@@ -1,12 +1,12 @@
-from typing import Dict, Tuple
+"""Continous PPO RL policy."""
+
+from typing import Dict
 
 import torch
 from torch import nn
 from torch import distributions
-import numpy as np
 
 from crowd_search import models
-from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
 
 class PPO(nn.Module):
@@ -18,9 +18,9 @@ class PPO(nn.Module):
         robot_cfg: Dict,
         human_cfg: Dict,
         incentive_cfg: Dict,
-        action_space_cfg: Dict,
         device: torch.device,
     ) -> None:
+        """Initialize the PPO"""
         super().__init__()
 
         self.human_radius = human_cfg.get("radius")
@@ -41,9 +41,6 @@ class PPO(nn.Module):
         self.gnn.to(device=device)
         self.gnn.train()
 
-        self.speed_samples = action_space_cfg.get("speed-samples")
-        self.rotation_samples = action_space_cfg.get("rotation-samples")
-
         self.v_pref = 1.0
         self.action_predictor = models.PredictionNetwork(input_state_dim=32)
         self.action_predictor.to(self.device)
@@ -53,19 +50,24 @@ class PPO(nn.Module):
         self.action_var = torch.full((2,), 0.5 ** 2)
 
     def forward(self):
+        """Defined since this object inherits nn.Module."""
         raise NotImplementedError
 
     @torch.no_grad()
     def act(self, robot_state: torch.Tensor, human_states: torch.Tensor):
+        """Function called by explorer."""
         human_states = human_states.transpose(0, -1)
         encoded_state = self.gnn(robot_state, human_states)
         action_mean = self.action_predictor(encoded_state)
+
         cov_mat = torch.diag(self.action_var).to(self.device)
         dist = distributions.MultivariateNormal(action_mean, cov_mat)
         action = dist.sample()
+
         return action.clamp(-self.v_pref, self.v_pref), dist.log_prob(action)
 
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
+        """Function called during training."""
 
         encoded_state = self.gnn(robot_state, human_states)
         action_mean = self.action_predictor(encoded_state)
@@ -76,6 +78,7 @@ class PPO(nn.Module):
         dist = distributions.MultivariateNormal(action_mean, cov_mat)
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
-        state_value = self.dynamics_reward_network(encoded_state)
-        return action_logprobs, state_value.squeeze(-1), dist_entropy
 
+        state_value = self.dynamics_reward_network(encoded_state)
+
+        return action_logprobs, state_value.squeeze(-1), dist_entropy

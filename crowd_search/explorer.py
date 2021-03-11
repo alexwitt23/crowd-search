@@ -2,15 +2,12 @@
 import copy
 import math
 import time
-from typing import Dict, List
 
-import numpy
 import gym
 import torch
 from torch.distributed import rpc
 
 from crowd_search import agents
-from crowd_search import policy
 from crowd_search import ppo
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
@@ -42,9 +39,9 @@ class Explorer:
             cfg.get("robot"),
             cfg.get("human"),
             cfg.get("incentives"),
-            cfg.get("action-space"),
             "cpu",
         )
+        self.policy_id = None
         self.storage_node = storage_node
         self._update_policy()
         self.run_continuous_episode()
@@ -52,28 +49,35 @@ class Explorer:
     def _update_policy(self):
         new_policy = None
         while new_policy is None:
-            new_policy = self.storage_node.rpc_sync().get_policy()
+            new_policy, policy_id = self.storage_node.rpc_sync().get_policy()
             time.sleep(2.0)
-        self.policy.load_state_dict(copy.deepcopy(new_policy.state_dict()))
-        self.policy.eval()
+
+        # If same policy, keep exploring
+        if self.policy_id == policy_id:
+            return
+        else:
+            self.policy_id = policy_id
+            self.policy.load_state_dict(copy.deepcopy(new_policy.state_dict()))
+            self.policy.eval()
 
     @torch.no_grad()
     def run_continuous_episode(self):
         """Run a single episode of the crowd search game."""
 
         while True:
-            states, actions, rewards, logprobs = [], [], [], []
             simulation_done = False
             # Reset the environment at the beginning of each episode and add initial
             # information to replay memory.
             game_history = GameHistory()
             observation = copy.deepcopy(self.environment.reset())
-            
+
             # Loop over simulation steps until we are done. The simulation terminates
             # when the goal is reached or some timeout based on the number of steps.
             while not simulation_done:
                 robot_state = copy.deepcopy(self.environment.robot.get_full_state())
-                game_history.observation_history.append((robot_state, copy.deepcopy(observation)))
+                game_history.observation_history.append(
+                    (robot_state, copy.deepcopy(observation))
+                )
                 action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )

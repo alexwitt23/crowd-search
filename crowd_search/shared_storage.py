@@ -8,6 +8,7 @@ intermediate step so the other nodes can continue to execute their jobs."""
 
 import copy
 from typing import Dict, List
+import uuid
 
 import torch
 
@@ -26,15 +27,17 @@ class SharedStorage:
         self.timeout = 0
         self.collision = 0
         self.policy = None
-        self.gamma = 0.99
+        self.gamma = 0.99  # TODO(alex): make configurable.
+        self.policy_id = None
 
     def update_policy(self, policy):
         """Recieve a policy object and update local copy."""
-        self.policy = copy.deepcopy(policy)
+        self.policy = policy
+        self.policy_id = uuid.uuid4()
 
     def get_policy(self):
         """Return policy object."""
-        return self.policy
+        return self.policy, self.policy_id
 
     def upload_history(self, history: explorer.GameHistory) -> None:
         """Add history to internal list."""
@@ -47,7 +50,7 @@ class SharedStorage:
             discounted_reward = reward + (self.gamma * discounted_reward)
             discounted_rewards.insert(0, discounted_reward)
 
-        rewards = torch.tensor(discounted_rewards)
+        rewards = torch.Tensor(discounted_rewards)
         if len(discounted_rewards) > 1:
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
 
@@ -71,7 +74,7 @@ class SharedStorage:
                     "logprobs": logprob,
                 }
             )
-        
+
         self.history.append(datas)
 
         if history.reward_history[-1] == 1.0:
@@ -80,7 +83,7 @@ class SharedStorage:
             self.timeout += 1
         else:
             self.collision += 1
-        
+
         self.episode_lengths.append(len(history.logprobs))
 
     def get_history(self) -> List[Dict[str, torch.Tensor]]:
@@ -90,7 +93,7 @@ class SharedStorage:
 
         total = sum(self.episode_lengths)
         mean_times = total / len(self.episode_lengths)
-        
+
         return (
             self.history,
             mean_times,

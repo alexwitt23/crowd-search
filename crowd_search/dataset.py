@@ -2,23 +2,21 @@
 really, it might be removed in the future. The key part is the collation function
 which allows us to batch together the different collections of input data."""
 
-import copy
 import pathlib
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import uuid
+import shutil
 
-import numpy
 import torch
 from torch.utils import data
-
-from crowd_search import explorer
 
 
 class Dataset(data.Dataset):
     """Dataset class."""
 
     def __init__(self, save_dir: pathlib.Path):
+        """initialize"""
         super().__init__()
 
         self.gamma = 0.99
@@ -34,16 +32,21 @@ class Dataset(data.Dataset):
         # Retrieve the game from the list of available games.
         return torch.load(self.items[idx], map_location="cpu")
 
-    def update(self, game_histories: List[Dict[str, torch.Tensor]]):
-        self.clear()
-        for game_history in game_histories:
-            for data in game_history:
-                torch.save(data, self.save_dir / f"{uuid.uuid4()}")
+    def update(self, game_histories: List[Dict[str, torch.Tensor]], idx: int):
+        """take in new data, clear what was previous in the save_dir and write to cache directory."""
+        self.save_dir_nested = self.save_dir / f"{idx}"
+        self.save_dir_nested.mkdir(exist_ok=True)
 
-    def clear(self):
-        for item in self.save_dir.glob("*"):
-            item.unlink()
-        time.sleep(3.0)
+        previous_save_dir = self.save_dir / f"{idx - 1}"
+        if previous_save_dir.is_dir():
+            shutil.rmtree(previous_save_dir)
+        print(previous_save_dir)
+        for game_history in game_histories:
+            for data_item in game_history:
+                torch.save(data_item, self.save_dir_nested / f"{uuid.uuid4()}")
+
+    def prepare_for_epoch(self) -> None:
+        self.items = list(self.save_dir_nested.glob("*"))
 
 
 def collate(batches):

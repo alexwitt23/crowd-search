@@ -202,8 +202,8 @@ class CrowdSim(gym.Env):
             < self.robot.get_radius()
         )
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
-        # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
-        # further_away = dist_to_goal_fut > dist_to_goal_now
+        dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
+        further_away = dist_to_goal_now - dist_to_goal_fut
 
         if self.global_time >= self.time_limit - 1:
             reward = 0
@@ -223,7 +223,7 @@ class CrowdSim(gym.Env):
             )
             done = False
         else:
-            reward = -0.01
+            reward = further_away.sigmoid() / 10
             done = False
 
         # update all agents
