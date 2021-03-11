@@ -40,7 +40,7 @@ class Dataset(data.Dataset):
         previous_save_dir = self.save_dir / f"{idx - 1}"
         if previous_save_dir.is_dir():
             shutil.rmtree(previous_save_dir)
-        print(previous_save_dir)
+
         for game_history in game_histories:
             for data_item in game_history:
                 torch.save(data_item, self.save_dir_nested / f"{uuid.uuid4()}")

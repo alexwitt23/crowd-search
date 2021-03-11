@@ -1,12 +1,13 @@
 """Continous PPO RL policy."""
 
-from typing import Dict
+from typing import Dict, List
 
 import torch
 from torch import nn
 from torch import distributions
 
 from crowd_search import models
+from third_party.crowd_sim.envs.utils import agent_actions
 
 
 class PPO(nn.Module):
@@ -19,6 +20,8 @@ class PPO(nn.Module):
         human_cfg: Dict,
         incentive_cfg: Dict,
         device: torch.device,
+        action_space: List[agent_actions.ActionXY] = None,
+        **kwargs
     ) -> None:
         """Initialize the PPO"""
         super().__init__()
@@ -29,6 +32,7 @@ class PPO(nn.Module):
         self.discomfort_distance = incentive_cfg.get("discomfort-distance")
         self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
         self.device = device
+        self.action_space = action_space
 
         # Build the different models.
         gnn_cfg = models_cfg.get("gnn")
@@ -42,29 +46,31 @@ class PPO(nn.Module):
         self.gnn.train()
 
         self.v_pref = 1.0
-        self.action_predictor = models.PredictionNetwork(input_state_dim=32)
+        self.action_predictor = models.PredictionNetwork(
+            action_space=len(self.action_space), input_state_dim=32
+        )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
         self.dynamics_reward_network = models.DynamicsNetwork(32, 1)
-        self.action_var = torch.full((2,), 0.5 ** 2)
 
     def forward(self):
         """Defined since this object inherits nn.Module."""
         raise NotImplementedError
 
     @torch.no_grad()
-    def act(self, robot_state: torch.Tensor, human_states: torch.Tensor):
+    def act(
+        self, robot_state: torch.Tensor, human_states: torch.Tensor
+    ) -> agent_actions.ActionXY:
         """Function called by explorer."""
         human_states = human_states.transpose(0, -1)
         encoded_state = self.gnn(robot_state, human_states)
-        action_mean = self.action_predictor(encoded_state)
+        action_mean = self.action_predictor(encoded_state).softmax(-1)
 
-        cov_mat = torch.diag(self.action_var).to(self.device)
-        dist = distributions.MultivariateNormal(action_mean, cov_mat)
+        dist = distributions.Categorical(action_mean)
         action = dist.sample()
 
-        return action.clamp(-self.v_pref, self.v_pref), dist.log_prob(action)
+        return action, self.action_space[action.item()], dist.log_prob(action)
 
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
         """Function called during training."""
@@ -72,10 +78,7 @@ class PPO(nn.Module):
         encoded_state = self.gnn(robot_state, human_states)
         action_mean = self.action_predictor(encoded_state)
 
-        action_var = self.action_var.expand_as(action_mean)
-        cov_mat = torch.diag_embed(action_var).to(self.device)
-
-        dist = distributions.MultivariateNormal(action_mean, cov_mat)
+        dist = distributions.Categorical(action_mean)
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
 

@@ -5,6 +5,7 @@ import random
 from typing import Dict
 
 import gym
+import numpy as np
 import torch
 
 from crowd_search import agents
@@ -54,6 +55,12 @@ class CrowdSim(gym.Env):
         # TODO(alex): Look into different planners. Socialforce models?
         # TODO(alex): build a human policy factory
         self.motion_planner = environment.ORCA(motion_planner_cfg)
+        # TODO(alex): un hardcode
+        self.speed_samples = 5
+        # The number of rotation samples to consider.
+        self.rotation_samples = 16
+
+        self.build_action_space(preferred_velocity=1.0)
 
     def __str__(self) -> str:
         """Print a verbal description of the simulation environment. Can be helpful
@@ -202,7 +209,9 @@ class CrowdSim(gym.Env):
             < self.robot.get_radius()
         )
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
-        dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
+        dist_to_goal_now = torch.norm(
+            self.robot.get_goal_position() - self.robot.get_position()
+        )
         further_away = dist_to_goal_now - dist_to_goal_fut
 
         if self.global_time >= self.time_limit - 1:
@@ -223,7 +232,7 @@ class CrowdSim(gym.Env):
             )
             done = False
         else:
-            reward = further_away.sigmoid() / 10
+            reward = 0.0
             done = False
 
         # update all agents
@@ -245,9 +254,33 @@ class CrowdSim(gym.Env):
 
         return torch.stack([human.get_observable_state() for human in self.humans])
 
-    # TODO(alex): Is this still needed since action space is continuous?
     def legal_actions(self):
-        return list(range(41))
+        return len(self.action_space)
 
     def render(self, mode):
         raise NotImplementedError
+
+    def build_action_space(self, preferred_velocity: float):
+        """Given a desired number of speed and rotation samples, build the action
+        space available to the model."""
+
+        # Shift speeds to no 0.0 speed.
+        self.speeds = np.linspace(
+            0, preferred_velocity, self.speed_samples, endpoint=False
+        )
+        self.speeds += self.speeds[1]
+        self.rotations = np.linspace(
+            0, 2 * np.pi, self.rotation_samples, endpoint=False
+        )
+
+        # Add a stop action.
+        self.action_space = [agent_actions.ActionXY(0, 0)]
+
+        for speed in self.speeds:
+            for rotation in self.rotations:
+                self.action_space.append(
+                    agent_actions.ActionXY(
+                        round(speed * np.cos(rotation), 5),
+                        round(speed * np.sin(rotation), 5),
+                    )
+                )

@@ -16,6 +16,7 @@ import tempfile
 import time
 from typing import Dict, List
 
+import gym
 import numpy
 import torch
 from torch import nn
@@ -28,9 +29,8 @@ from torch.utils import data
 from crowd_search import dataset
 from crowd_search import distributed_utils
 from crowd_search import explorer
-from crowd_search import policy
-from crowd_search import ppo
 from crowd_search import shared_storage
+from crowd_search.policies import policy_factory
 from crowd_search.visualization import viz
 
 
@@ -65,20 +65,17 @@ class Trainer:
             self.is_main = True
 
         # Create the policy
-        self.policy = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            device,
+        environment = gym.make(
+            "CrowdSim-v1",
+            env_cfg=cfg.get("sim-environment"),
+            incentive_cfg=cfg.get("incentives"),
+            motion_planner_cfg=cfg.get("human-motion-planner"),
+            human_cfg=cfg.get("human"),
+            robot_cfg=cfg.get("robot"),
         )
-        self.policy_old = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            device,
-        )
+        kwargs = {"device": self.device, "action_space": environment.action_space}
+        self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
+        self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.policy.to(self.device)
         self.policy_old.to(self.device)
@@ -94,7 +91,7 @@ class Trainer:
                 )
 
         self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=1.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
+            self.policy.parameters(), lr=3.0e-3, weight_decay=0.0
         )
         self.epoch = 0
         self.training_step = 0

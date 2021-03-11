@@ -67,7 +67,7 @@ human-motion-planner:
 
 # The various rewards and penalities for different behavors. The penalties are
 # based on social forces.
-incentives:
+incentives: &incentives_cfg
   # Reaching goal is rewarded
   success: 1.0
   # Collision is penalized
@@ -78,7 +78,7 @@ incentives:
   discomfort-penalty-factor: 0.5
 
 # Define the parameters used to generate and control human agents.
-human:
+human: &human_cfg
   # Use Optimal Reciprocal Collision Avoidance to model humans.
   policy: "orca"
   # Radius of circular region around human. Used to determine collisions.
@@ -87,37 +87,43 @@ human:
   preferred-velocity: 1.0
 
 # Define the parameters used to generate and control the robot.
-robot:
+robot: &robot_cfg
   # TODO(alex): Policy name?
   policy: None
   # Radius of circular region around robot. Used to determine collisions.
   radius: *robot_radius
   preferred-velocity: 1.0
 
-# Define the various models used during training.
-models:
-  # Social graph neural network.
-  gnn-output-depth: &output-dim 32
-  gnn: 
-    # The dimension of the robot's state. The 9 values are:
-    # [pos_x, pos_y, vel_x, vel_y, direction,
-    # target_x, target_y, radius, preferred-velocity]
-    robot-state-dimension: 4
-    # The dimension of a human's observable state. The 5 values are:
-    # pos_x, pos_y, vel_x, vel_y, direction.
-    human-state-dimension: 5
-    # The human and robot states are passed through a MLP to get equal output channels.
-    # The last dimension here is used as the node channel depth in the graph network.
-    mlp-layer-channels: [32, 32, *output-dim]
-    # The number of layers in the graph model.
-    gnn-layers: 6
-  
-  state-net:
-    time-step: *time_step
-    channel-depth: *output-dim
 
-  value-net:
-    channel-depth: *output-dim
-    net-dims: [*output-dim, *output-dim, *output-dim, 1]
+policy:
+  type: "PPO"
 
-# TODO(alex): Add optimizer type
+  # Define the various models used during training.
+  models_cfg:
+    # Social graph neural network.
+    gnn-output-depth: &output-dim 32
+    gnn: 
+      # The dimension of the robot's state. The 9 values are:
+      # [pos_x, pos_y, vel_x, vel_y, direction,
+      # target_x, target_y, radius, preferred-velocity]
+      robot-state-dimension: 4
+      # The dimension of a human's observable state. The 5 values are:
+      # pos_x, pos_y, vel_x, vel_y, direction.
+      human-state-dimension: 5
+      # The human and robot states are passed through a MLP to get equal output channels.
+      # The last dimension here is used as the node channel depth in the graph network.
+      mlp-layer-channels: [32, 32, *output-dim]
+      # The number of layers in the graph model.
+      gnn-layers: 6
+    
+    state-net:
+      time-step: *time_step
+      channel-depth: *output-dim
+
+    value-net:
+      channel-depth: *output-dim
+      net-dims: [*output-dim, *output-dim, *output-dim, 1]
+
+  robot_cfg: *robot_cfg
+  human_cfg: *human_cfg
+  incentive_cfg: *incentives_cfg

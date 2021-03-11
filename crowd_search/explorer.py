@@ -8,7 +8,7 @@ import torch
 from torch.distributed import rpc
 
 from crowd_search import agents
-from crowd_search import ppo
+from crowd_search.policies import policy_factory
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
 
@@ -34,13 +34,12 @@ class Explorer:
         )
 
         self.robot = agents.Robot(cfg.get("robot"))
-        self.policy = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            "cpu",
-        )
+
+        kwargs = {
+            "device": torch.device("cpu"),
+            "action_space": self.environment.action_space,
+        }
+        self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_id = None
         self.storage_node = storage_node
         self._update_policy()
@@ -78,15 +77,12 @@ class Explorer:
                 game_history.observation_history.append(
                     (robot_state, copy.deepcopy(observation))
                 )
-                action, action_log_prob = self.policy.act(
+                action_tensor, action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )
-                # action = action
-                observation, reward, simulation_done = self.environment.step(
-                    ActionXY(action[0, 0], action[0, 1])
-                )
+                observation, reward, simulation_done = self.environment.step(action)
                 game_history.reward_history.append(copy.deepcopy(reward))
-                game_history.action_history.append(copy.deepcopy(action))
+                game_history.action_history.append(action_tensor)
                 game_history.logprobs.append(copy.deepcopy(action_log_prob))
 
             self.send_history(game_history)
