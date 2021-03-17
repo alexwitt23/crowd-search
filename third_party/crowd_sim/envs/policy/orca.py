@@ -108,7 +108,6 @@ class ORCA(Policy):
                 (robot_state[2], robot_state[3]),
             )
             for human_state in human_states:
-                print(human_state)
                 self.sim.addAgent(
                     (human_state[0], human_state[1]),
                     *params,
@@ -169,7 +168,6 @@ class CentralizedORCA(ORCA):
                 self.time_step, *params, self.radius, self.max_speed
             )
             for agent_state in state:
-                print(agent_state)
                 self.sim.addAgent(
                     (agent_state[0], agent_state[1]),
                     *params,

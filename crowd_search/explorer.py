@@ -43,6 +43,7 @@ class Explorer:
         self.policy_id = None
         self.storage_node = storage_node
         self._update_policy()
+        self.num_epochs = cfg.get("training").get("num-epochs")
         self.run_continuous_episode()
 
     def _update_policy(self):
@@ -88,8 +89,22 @@ class Explorer:
             self.send_history(game_history)
             self._update_policy()
 
+            if self.storage_node.rpc_sync().get_epoch() == self.num_epochs:
+
+                return
+            
+            while (
+                self.storage_node.rpc_sync().get_history_amount()
+                > self.storage_node.rpc_sync().get_history_capacity()
+            ):
+                time.sleep(5.0)
+                if self.storage_node.rpc_sync().get_epoch() > self.num_epochs:
+                    return
+
+
     def send_history(self, history):
         self.storage_node.rpc_async().upload_history(history)
+
 
 
 class GameHistory:

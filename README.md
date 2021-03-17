@@ -48,7 +48,7 @@ make run
 Review the training config in `crowd_search/config.yaml`. When ready to train, run:
 ```bash
 PYTHONPATH=. crowd_search/train_distributed.py \
-    --config_path crowd_search/config_2gpu.yaml
+    --config_path crowd_search/configs/config_2gpu.yaml
 ```
 
 To then visualize the results of your runs, use TensorBoard:

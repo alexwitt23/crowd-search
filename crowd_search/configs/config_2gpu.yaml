@@ -7,6 +7,7 @@ time-step: &time_step 0.25
 
 # Define the experiment's parameters.
 training:
+  num-epochs: 2000
   # The number of learning nodes should be <= the GPU count unless you're
   # doing all CPU training.
   num-learners: 2
@@ -14,6 +15,18 @@ training:
   num-explorers: 6
   # The batch size on one training node (the same for all trainers)
   batch-size: 2000
+  # Set the maximum of history the storage node will hold. This sets a hard max limit
+  # on memory usage:
+  max-storage-memory: 10000
+  # Whether or not to write gifs of the simulation environment
+  visualize-results: false
+  # Optimizer configuration
+  optimizer:
+    type: "Adam"  # CURRENTLY UNUSED
+    # This is directly passed in as **kwargs to whatever optimizer is selected.
+    kwargs:
+      lr: 1.0e-3
+      weight_decay: 1.0e-4
 
 
 # These are params sent to the crowd_sim environment
@@ -25,8 +38,8 @@ sim-environment:
   # The number of humans in the simulation TODO(alex): What about a random amount?
   num-humans: 1
   
-  world-width: 20.0
-  world-height: 20.0
+  world-width: 6.0
+  world-height: 6.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
   goal-location-width: 0.0

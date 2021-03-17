@@ -12,12 +12,10 @@ The basic idea is the class that executes the training loops. It manages a few t
 import random
 import copy
 import pathlib
-import tempfile
 import time
 from typing import Dict, List
 
 import gym
-import numpy
 import torch
 from torch import nn
 from torch import distributed
@@ -49,15 +47,15 @@ class Trainer:
     ) -> None:
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
-        self.epochs = 8000
         self.device = device
         self.num_learners = num_learners
         self.batch_size = batch_size
         self.run_dir = run_dir
-        run_dir.mkdir(parents=True, exist_ok=True)
         self.eps_clip = 0.2
         self.num_episodes = 0
         self.incentives = cfg.get("incentives")
+        train_cfg = cfg.get("training")
+        self.epochs = train_cfg.get("num-epochs")
         # If main node, create a logger
         self.is_main = False
         if rank == 0:
@@ -79,6 +77,7 @@ class Trainer:
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.policy.to(self.device)
         self.policy_old.to(self.device)
+        self.visualize_results = train_cfg.get("visualize-results")
 
         if num_learners > 1:
             if torch.cuda.is_available():
@@ -90,9 +89,10 @@ class Trainer:
                     self.policy, device_ids=None, find_unused_parameters=True
                 )
 
-        self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=3.0e-3, weight_decay=0.0
-        )
+        optimizer_cfg = train_cfg.get("optimizer")
+        optimizer_kwargs = optimizer_cfg.get("kwargs")
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), **optimizer_kwargs)
+        
         self.epoch = 0
         self.training_step = 0
         self.dataset = dataset.Dataset(cache_dir)
@@ -100,7 +100,11 @@ class Trainer:
         self.explorer_references = []
 
         storage_info = rpc.get_worker_info(f"Storage:{storage_node}")
-        self.storage_node = rpc.remote(storage_info, shared_storage.SharedStorage)
+        self.storage_node = rpc.remote(
+            storage_info,
+            shared_storage.SharedStorage,
+            args=(train_cfg.get("max-storage-memory"),),
+        )
 
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
@@ -111,9 +115,10 @@ class Trainer:
             )
         self.global_step = 0
 
-        self.MseLoss = nn.MSELoss()
+        self.mse_loss = nn.MSELoss()
         # Update explorers with initial policy weights
         self._send_policy()
+        self.continous_train()
 
     def _send_policy(self):
         model = copy.deepcopy(distributed_utils.unwrap_ddp(self.policy_old))
@@ -163,7 +168,7 @@ class Trainer:
         """Called after new history is acquired from local storage node. We want to
         send all new history to each other trainer node."""
 
-        if self.is_main:
+        if self.is_main and self.visualize_results:
             reached_goal = []
             collision = []
             timeout = []
@@ -198,7 +203,7 @@ class Trainer:
                     histories[idx], self.run_dir / f"plots/{self.global_step}_c.gif",
                 )
 
-        self.dataset.update(histories, self.epoch)
+        self.dataset.update(histories, self.epoch, self.is_main)
         if distributed.is_initialized():
             distributed.barrier()
 
@@ -218,6 +223,7 @@ class Trainer:
         for epoch in range(self.epochs):
             self.epoch = epoch
             self._get_history()
+            self.storage_node.rpc_sync().set_epoch(epoch + 1)
             # Update memory from explorer workers
             if self.is_main:
                 print(f"Starting epoch {epoch}.")
@@ -273,9 +279,10 @@ class Trainer:
                         torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
                         * advantages
                     )
+                    # TODO(alex): Maybe need to tweak these weights?
                     loss = (
                         -torch.min(surr1, surr2)
-                        + 0.5 * self.MseLoss(state_values, target_reward)
+                        + 0.5 * self.mse_loss(state_values, target_reward)
                         - 0.01 * dist_entropy
                     )
                     loss = loss.mean()
@@ -320,3 +327,7 @@ class Trainer:
                 distributed_utils.unwrap_ddp(self.policy).state_dict()
             )
             self._send_policy()
+
+        if self.is_main:
+            print("Training complete.")
+

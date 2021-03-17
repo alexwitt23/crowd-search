@@ -150,8 +150,8 @@ class CrowdSim(gym.Env):
         goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
         goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
         self.robot.set_state(
-            position_x=round(pos[0], 5),
-            position_y=round(pos[1], 5),
+            position_x=2.0,
+            position_y=2.0,
             velocity_x=0.0,
             velocity_y=0.0,
             goal_position_x=round(goal_x, 5),

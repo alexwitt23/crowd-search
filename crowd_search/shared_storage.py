@@ -19,7 +19,7 @@ class SharedStorage:
     """Shared storage object. Simple interface which basically acts as a
     holding spot for different data in the training pipeline."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_history_storage: int) -> None:
         """Initialize the obect."""
         self.history = []
         self.episode_lengths = []
@@ -29,6 +29,8 @@ class SharedStorage:
         self.policy = None
         self.gamma = 0.99  # TODO(alex): make configurable.
         self.policy_id = None
+        self.max_history_storage = max_history_storage
+        self.epoch = 0
 
     def update_policy(self, policy):
         """Recieve a policy object and update local copy."""
@@ -74,6 +76,8 @@ class SharedStorage:
                     "logprobs": logprob,
                 }
             )
+            if len(datas) > self.max_history_storage:
+                break
 
         self.history.append(datas)
 
@@ -85,6 +89,12 @@ class SharedStorage:
             self.collision += 1
 
         self.episode_lengths.append(len(history.logprobs))
+
+    def get_history_amount(self) -> int:
+        return sum(len(h) for h in self.history)
+
+    def get_history_capacity(self) -> int:
+        return self.max_history_storage
 
     def get_history(self) -> List[Dict[str, torch.Tensor]]:
         """Return the internal history list."""
@@ -110,3 +120,9 @@ class SharedStorage:
         self.timeout = 0
         self.collision = 0
         self.episode_lengths = []
+
+    def get_epoch(self):
+        return self.epoch
+    
+    def set_epoch(self, epoch):
+        self.epoch = epoch
