@@ -11,9 +11,22 @@ training:
   # doing all CPU training.
   num-learners: 1
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 6
+  num-explorers: 2
   # The batch size on one training node (the same for all trainers)
   batch-size: 2000
+  max-storage-memory: 10000
+  # Whether or not to write gifs of the simulation environment
+  visualize-results: false
+  # Optimizer configuration
+  optimizer:
+    type: "Adam"  # CURRENTLY UNUSED
+    # This is directly passed in as **kwargs to whatever optimizer is selected.
+    kwargs:
+      lr: 1.0e-3
+      weight_decay: 1.0e-4
+
+
+
 
 
 # These are params sent to the crowd_sim environment
