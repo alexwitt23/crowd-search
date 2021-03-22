@@ -47,12 +47,14 @@ class PPO(nn.Module):
 
         self.v_pref = 1.0
         self.action_predictor = models.PredictionNetwork(
-            action_space=len(self.action_space), input_state_dim=32
+            models_cfg.get("gnn-output-depth"), len(self.action_space)
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_reward_network = models.DynamicsNetwork(32, 1)
+        self.dynamics_reward_network = models.DynamicsNetwork(
+            models_cfg.get("gnn-output-depth"), 1
+        )
 
     def forward(self):
         """Defined since this object inherits nn.Module."""

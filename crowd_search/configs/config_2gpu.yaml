@@ -19,14 +19,14 @@ training:
   # on memory usage:
   max-storage-memory: 10000
   # Whether or not to write gifs of the simulation environment
-  visualize-results: false
+  visualize-results: true
   # Optimizer configuration
   optimizer:
     type: "Adam"  # CURRENTLY UNUSED
     # This is directly passed in as **kwargs to whatever optimizer is selected.
     kwargs:
-      lr: 1.0e-3
-      weight_decay: 1.0e-4
+      lr: 5.0e-4
+      weight_decay: 1.0e-5
 
 
 # These are params sent to the crowd_sim environment
@@ -38,8 +38,8 @@ sim-environment:
   # The number of humans in the simulation TODO(alex): What about a random amount?
   num-humans: 1
   
-  world-width: 6.0
-  world-height: 6.0
+  world-width: 20.0
+  world-height: 20.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
   goal-location-width: 0.0
@@ -114,7 +114,7 @@ policy:
   # Define the various models used during training.
   models_cfg:
     # Social graph neural network.
-    gnn-output-depth: &output-dim 32
+    gnn-output-depth: &output-dim 128
     gnn: 
       # The dimension of the robot's state. The 9 values are:
       # [pos_x, pos_y, vel_x, vel_y, direction,
@@ -125,9 +125,9 @@ policy:
       human-state-dimension: 5
       # The human and robot states are passed through a MLP to get equal output channels.
       # The last dimension here is used as the node channel depth in the graph network.
-      mlp-layer-channels: [32, 32, *output-dim]
+      mlp-layer-channels: [32, 64, *output-dim]
       # The number of layers in the graph model.
-      gnn-layers: 6
+      gnn-layers: 12
     
     state-net:
       time-step: *time_step

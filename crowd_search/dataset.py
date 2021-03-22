@@ -33,16 +33,13 @@ class Dataset(data.Dataset):
         return torch.load(self.items[idx], map_location="cpu")
 
     def update(
-        self,
-        game_histories: List[Dict[str, torch.Tensor]],
-        idx: int,
-        is_main: bool
+        self, game_histories: List[Dict[str, torch.Tensor]], idx: int, is_main: bool
     ):
         """take in new data, clear what was previous in the save_dir and write to cache directory."""
         self.save_dir_nested = self.save_dir / f"{idx}"
         self.save_dir_nested.mkdir(exist_ok=True)
 
-        previous_save_dir = self.save_dir / f"{idx - 1}"
+        previous_save_dir = self.save_dir / f"{idx - 2}"
         if previous_save_dir.is_dir() and is_main:
             shutil.rmtree(previous_save_dir)
 

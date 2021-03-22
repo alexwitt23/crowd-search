@@ -92,7 +92,7 @@ class Explorer:
             if self.storage_node.rpc_sync().get_epoch() == self.num_epochs:
 
                 return
-            
+
             while (
                 self.storage_node.rpc_sync().get_history_amount()
                 > self.storage_node.rpc_sync().get_history_capacity()
@@ -101,10 +101,8 @@ class Explorer:
                 if self.storage_node.rpc_sync().get_epoch() > self.num_epochs:
                     return
 
-
     def send_history(self, history):
         self.storage_node.rpc_async().upload_history(history)
-
 
 
 class GameHistory:

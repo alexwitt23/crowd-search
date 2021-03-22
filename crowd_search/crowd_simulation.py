@@ -206,7 +206,7 @@ class CrowdSim(gym.Env):
 
         reaching_goal = (
             torch.norm(end_position - self.robot.get_goal_position())
-            < self.robot.get_radius()
+            < 2 * self.robot.get_radius()
         )
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
         dist_to_goal_now = torch.norm(

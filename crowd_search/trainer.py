@@ -61,7 +61,7 @@ class Trainer:
         if rank == 0:
             self.logger = tensorboard.SummaryWriter(run_dir)
             self.is_main = True
-
+        self.rank = rank
         # Create the policy
         environment = gym.make(
             "CrowdSim-v1",
@@ -92,7 +92,7 @@ class Trainer:
         optimizer_cfg = train_cfg.get("optimizer")
         optimizer_kwargs = optimizer_cfg.get("kwargs")
         self.optimizer = torch.optim.Adam(self.policy.parameters(), **optimizer_kwargs)
-        
+
         self.epoch = 0
         self.training_step = 0
         self.dataset = dataset.Dataset(cache_dir)
@@ -163,6 +163,8 @@ class Trainer:
                 "explorer/timeout_frac", timeout, self.global_step,
             )
         self._combine_datasets(new_histories)
+        if distributed.is_initialized():
+            distributed.barrier()
 
     def _combine_datasets(self, histories: List[List[Dict[str, torch.Tensor]]]):
         """Called after new history is acquired from local storage node. We want to
@@ -243,6 +245,7 @@ class Trainer:
                 num_workers=0,
                 sampler=sampler,
                 collate_fn=dataset.collate,
+                
             )
             for mini_epoch in range(10):
                 if hasattr(sampler, "set_epoch"):
@@ -330,4 +333,3 @@ class Trainer:
 
         if self.is_main:
             print("Training complete.")
-
