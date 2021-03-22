@@ -35,7 +35,7 @@ class Agent:
             >>> agent.get_position()
             tensor([0., 1.])
         """
-        return torch.Tensor([self.state_tensor[0].item(), self.state_tensor[1]])
+        return torch.Tensor([self.state_tensor[0], self.state_tensor[1]])
 
     def get_velocity(self) -> torch.Tensor:
         """Get agent's velocity.

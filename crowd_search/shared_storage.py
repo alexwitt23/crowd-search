@@ -123,6 +123,6 @@ class SharedStorage:
 
     def get_epoch(self):
         return self.epoch
-    
+
     def set_epoch(self, epoch):
         self.epoch = epoch
