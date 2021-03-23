@@ -10,7 +10,7 @@ from crowd_search import models
 from third_party.crowd_sim.envs.utils import agent_actions
 
 
-class PPO(nn.Module):
+class DiscretePPO(nn.Module):
     """Describe the policy that governs the robot's decisions."""
 
     def __init__(

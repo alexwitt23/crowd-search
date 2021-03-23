@@ -106,13 +106,12 @@ class GNN(nn.Module):
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
         """TODO(alex): docstring"""
         robot_state = self.robot_mlp(robot_state)
-        human_state = self.human_mlp(human_state)
+        #human_state = self.human_mlp(human_state)
         # Concatenate the state tensors together
-        combined_state = torch.cat([robot_state, human_state], dim=-1)
-        for layer in self.attn_layers:
-            combined_state = layer(combined_state, combined_state)
-
-        return combined_state
+        #combined_state = torch.cat([robot_state, human_state], dim=-1)
+        #for layer in self.attn_layers:
+        #    combined_state = layer(combined_state, combined_state)
+        return robot_state
 
 
 # Similar to:
@@ -140,7 +139,7 @@ class PredictionNetwork(nn.Module):
 
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
-class DynamicsNetwork(torch.nn.Module):
+class DynamicsNetwork(nn.Module):
     """TODO(alex): docstring"""
 
     def __init__(

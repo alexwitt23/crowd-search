@@ -72,6 +72,10 @@ class Trainer:
             robot_cfg=cfg.get("robot"),
         )
         kwargs = {"device": self.device, "action_space": environment.action_space}
+        
+        if self.is_main:
+            print(f">> Using policy: {cfg.get('policy').get('type')}.")
+    
         self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old.load_state_dict(self.policy.state_dict())

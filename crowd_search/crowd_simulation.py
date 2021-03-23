@@ -150,8 +150,8 @@ class CrowdSim(gym.Env):
         goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
         goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
         self.robot.set_state(
-            position_x=2.0,
-            position_y=2.0,
+            position_x=1.0,
+            position_y=1.0,
             velocity_x=0.0,
             velocity_y=0.0,
             goal_position_x=round(goal_x, 5),
@@ -217,20 +217,20 @@ class CrowdSim(gym.Env):
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
-        elif collision:
-            reward = self.collision_penalty
-            done = True
+        #elif collision:
+        #    reward = self.collision_penalty
+        #    done = True
         elif reaching_goal:
             reward = self.success_reward
             done = True
-        elif dmin < self.discomfort_dist:
-            # adjust the reward based on FPS
-            reward = (
-                (dmin - self.discomfort_dist)
-                * self.discomfort_penalty_factor
-                * self.time_step
-            )
-            done = False
+        #elif dmin < self.discomfort_dist:
+        #    # adjust the reward based on FPS
+        #    reward = (
+        #        (dmin - self.discomfort_dist)
+        #        * self.discomfort_penalty_factor
+        #        * self.time_step
+        #    )
+        #    done = False
         else:
             reward = 0.0
             done = False

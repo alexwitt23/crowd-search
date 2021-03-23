@@ -7,6 +7,7 @@ from torch import nn
 from torch import distributions
 
 from crowd_search import models
+from third_party.crowd_sim.envs.utils import agent_actions
 
 
 class ContinuousPPO(nn.Module):
@@ -44,12 +45,12 @@ class ContinuousPPO(nn.Module):
 
         self.v_pref = 1.0
         self.action_predictor = models.PredictionNetwork(
-            input_state_dim=32, action_space=2
+            models_cfg.get("gnn-output-depth"), action_space=2
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
 
-        self.dynamics_reward_network = models.DynamicsNetwork(32, 1)
+        self.dynamics_reward_network = models.DynamicsNetwork(models_cfg.get("gnn-output-depth"), 1)
         self.action_var = torch.full((2,), 0.5 ** 2)
 
     def forward(self):
@@ -67,7 +68,10 @@ class ContinuousPPO(nn.Module):
         dist = distributions.MultivariateNormal(action_mean, cov_mat)
         action = dist.sample()
 
-        return action.clamp(-self.v_pref, self.v_pref), dist.log_prob(action)
+        action_tensor = action.clamp(-self.v_pref, self.v_pref)
+        action = agent_actions.ActionXY(action_tensor[0, 0].item(), action_tensor[0, 1].item())
+
+        return action_tensor, action, dist.log_prob(action_tensor)
 
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
         """Function called during training."""

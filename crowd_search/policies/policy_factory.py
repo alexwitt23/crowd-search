@@ -2,9 +2,12 @@
 interface for using them."""
 
 from crowd_search.policies import ppo_continuous
-from crowd_search.policies import ppo
+from crowd_search.policies import ppo_discrete
 
-polcies = {"ContinuousPPO": ppo_continuous.ContinuousPPO, "PPO": ppo.PPO}
+polcies = {
+    "ContinuousPPO":ppo_continuous.ContinuousPPO,
+    "DiscretePPO": ppo_discrete.DiscretePPO
+}
 
 
 def make_policy(policy_cfg, kwargs):
