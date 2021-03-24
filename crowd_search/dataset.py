@@ -4,7 +4,7 @@ which allows us to batch together the different collections of input data."""
 
 import pathlib
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 import uuid
 import shutil
 
@@ -15,13 +15,15 @@ from torch.utils import data
 class Dataset(data.Dataset):
     """Dataset class."""
 
-    def __init__(self, save_dir: pathlib.Path):
+    def __init__(self, save_dir: pathlib.Path, policy: Any) -> None:
         """initialize"""
         super().__init__()
 
         self.gamma = 0.99
         self.save_dir = save_dir
         self.items = []
+        self.policy = policy
+        self.save_dir_nested = None
 
     def __len__(self) -> int:
         """Return length of the dataset."""
@@ -35,7 +37,8 @@ class Dataset(data.Dataset):
     def update(
         self, game_histories: List[Dict[str, torch.Tensor]], idx: int, is_main: bool
     ):
-        """take in new data, clear what was previous in the save_dir and write to cache directory."""
+        """Take in new data, clear what was previous in the save_dir and write to cache
+        directory."""
         self.save_dir_nested = self.save_dir / f"{idx}"
         self.save_dir_nested.mkdir(exist_ok=True)
 
@@ -50,35 +53,16 @@ class Dataset(data.Dataset):
     def prepare_for_epoch(self) -> None:
         self.items = list(self.save_dir_nested.glob("*"))
 
+    def collate(self, batches):
+        """This function takes in a list of data from the various data loading
+        threads and combines them all into one batch for training."""
+        output = {key: [] for key in self.policy.data_keys}
 
-def collate(batches):
-    """This function takes in a list of data from the various data loading
-    threads and combines them all into one batch for training."""
-    (
-        robot_state_batch,
-        human_state_batch,
-        action_batch,
-        reward_batch,
-        logprob_batch,
-    ) = (
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
+        for data_batch in batches:
+            for key in output:
+                output[key].append(data_batch[key])
 
-    for data_batch in batches:
-        robot_state_batch.append(data_batch["robot_states"])
-        human_state_batch.append(data_batch["human_states"])
-        action_batch.append(data_batch["action"].squeeze(0))
-        reward_batch.append(torch.Tensor([data_batch["reward"]]))
-        logprob_batch.append(torch.Tensor([data_batch["logprobs"]]))
+        for key in output:
+            output[key] = torch.stack(output[key])
 
-    return (
-        torch.stack(robot_state_batch),
-        torch.stack(human_state_batch),
-        torch.stack(action_batch),
-        torch.stack(reward_batch),
-        torch.stack(logprob_batch),
-    )
+        return output

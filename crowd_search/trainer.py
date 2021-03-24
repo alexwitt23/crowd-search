@@ -8,6 +8,9 @@ The basic idea is the class that executes the training loops. It manages a few t
 2. A copy of the policy. The policy is assumed to contain the necessary prediction methods.
    After a couple epochs, the new policy weights are sent to the explorer nodes that _this_
    trainer node controls.
+
+NOTE: Ideally this trainer script supports any policy, right now it is tied to PPO.
+TODO(alex): Fix the note above.
 """
 import random
 import copy
@@ -33,6 +36,7 @@ from crowd_search.visualization import viz
 
 
 class Trainer:
+    """The trainer class."""
     def __init__(
         self,
         cfg: Dict,
@@ -41,20 +45,30 @@ class Trainer:
         explorer_nodes: List[int],
         rank: int,
         run_dir: pathlib.Path,
-        batch_size: int,
         storage_node: int,
         cache_dir: pathlib.Path,
     ) -> None:
+        """
+        Args:
+            cfg: The configuration dictionary read in from the supplied .yaml file.
+            device: The device to use for this trainer.
+            num_learners: How many other learner (a.k.a.) trainer nodes there are.
+            explorer_nodes: A list of the node ranks of the explorer nodes that are
+                tied to this explorer node.
+            rank: The global rank of this trainer node.
+            run_dir: Where to write results during training.
+            storage_node: The node rank of the associated storage node.
+            cache_dir: Where to save intermediate results to. This is for the dataset.
+        """
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
         self.device = device
         self.num_learners = num_learners
-        self.batch_size = batch_size
         self.run_dir = run_dir
-        self.eps_clip = 0.2
         self.num_episodes = 0
         self.incentives = cfg.get("incentives")
         train_cfg = cfg.get("training")
+        self.batch_size = train_cfg.get("batch_size")
         self.epochs = train_cfg.get("num-epochs")
         # If main node, create a logger
         self.is_main = False
@@ -72,10 +86,10 @@ class Trainer:
             robot_cfg=cfg.get("robot"),
         )
         kwargs = {"device": self.device, "action_space": environment.action_space}
-        
+
         if self.is_main:
             print(f">> Using policy: {cfg.get('policy').get('type')}.")
-    
+
         self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old.load_state_dict(self.policy.state_dict())
@@ -99,7 +113,9 @@ class Trainer:
 
         self.epoch = 0
         self.training_step = 0
-        self.dataset = dataset.Dataset(cache_dir)
+        self.dataset = dataset.Dataset(
+            cache_dir, policy_factory.get_policy(cfg.get("policy").get("type"))
+        )
         self.cache_dir = cache_dir
         self.explorer_references = []
 
@@ -107,7 +123,10 @@ class Trainer:
         self.storage_node = rpc.remote(
             storage_info,
             shared_storage.SharedStorage,
-            args=(train_cfg.get("max-storage-memory"),),
+            args=(
+                train_cfg.get("max-storage-memory"),
+                policy_factory.get_policy(cfg.get("policy").get("type")),
+            ),
         )
 
         for explorer_node in explorer_nodes:
@@ -248,68 +267,14 @@ class Trainer:
                 pin_memory=True,
                 num_workers=0,
                 sampler=sampler,
-                collate_fn=dataset.collate,
-                
+                collate_fn=self.dataset.collate,
             )
             for mini_epoch in range(10):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
-                    (
-                        robot_state_batch,
-                        human_state_batch,
-                        action_batch,
-                        target_reward,
-                        logprobs_batch,
-                    ) = batch
-                    robot_state_batch = robot_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    human_state_batch = human_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    action_batch = action_batch.to(self.device)
-                    target_reward = target_reward.to(self.device).squeeze(-1)
-                    logprobs_batch = logprobs_batch.to(self.device).squeeze(-1)
+                    loss = self.policy.process_batch(batch)
 
-                    logprobs, state_values, dist_entropy = distributed_utils.unwrap_ddp(
-                        self.policy
-                    ).evaluate(robot_state_batch, human_state_batch, action_batch)
-
-                    # Finding the ratio (pi_theta / pi_theta__old):
-                    ratios = torch.exp(logprobs - logprobs_batch.detach())
-
-                    # Finding Surrogate Loss:
-                    advantages = target_reward - state_values.detach()
-                    surr1 = ratios * advantages
-                    surr2 = (
-                        torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                        * advantages
-                    )
-                    # TODO(alex): Maybe need to tweak these weights?
-                    loss = (
-                        -torch.min(surr1, surr2)
-                        + 0.5 * self.mse_loss(state_values, target_reward)
-                        - 0.01 * dist_entropy
-                    )
-                    loss = loss.mean()
-
-                    if torch.isnan(robot_state_batch).any():
-                        raise ValueError("robot_state_batch is nan")
-                    if torch.isnan(human_state_batch).any():
-                        raise ValueError("human_state_batch is nan")
-                    if torch.isnan(action_batch).any():
-                        raise ValueError("action_batch is nan")
-                    if torch.isnan(target_reward).any():
-                        raise ValueError("target_reward is nan")
-                    if torch.isnan(logprobs_batch).any():
-                        raise ValueError("logprobs_batch is nan")
-                    if torch.isnan(logprobs).any():
-                        raise ValueError("logprobs is nan")
-                    if torch.isnan(state_values).any():
-                        raise ValueError("state_values is nan")
-                    if torch.isnan(dist_entropy).any():
-                        raise ValueError("dist_entropy is nan")
                     if torch.isnan(loss) or torch.isinf(loss):
                         raise ValueError("Loss blew up.")
 

@@ -106,10 +106,10 @@ class GNN(nn.Module):
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
         """TODO(alex): docstring"""
         robot_state = self.robot_mlp(robot_state)
-        #human_state = self.human_mlp(human_state)
+        # human_state = self.human_mlp(human_state)
         # Concatenate the state tensors together
-        #combined_state = torch.cat([robot_state, human_state], dim=-1)
-        #for layer in self.attn_layers:
+        # combined_state = torch.cat([robot_state, human_state], dim=-1)
+        # for layer in self.attn_layers:
         #    combined_state = layer(combined_state, combined_state)
         return robot_state
 
@@ -123,7 +123,15 @@ class PredictionNetwork(nn.Module):
         """TODO(alex): docstring"""
         super().__init__()
         out_size = 2 * input_state_dim
-        self.action_predictor = mlp([input_state_dim, 2 * input_state_dim, 3 * input_state_dim, 3 * input_state_dim, out_size])
+        self.action_predictor = mlp(
+            [
+                input_state_dim,
+                2 * input_state_dim,
+                3 * input_state_dim,
+                3 * input_state_dim,
+                out_size,
+            ]
+        )
         self.avg = nn.AdaptiveAvgPool1d(1)
         self.action_head = nn.Sequential(
             nn.Linear(out_size, action_space, bias=False), nn.Tanh()
@@ -149,7 +157,13 @@ class DynamicsNetwork(nn.Module):
         super().__init__()
         self.avg = nn.AdaptiveAvgPool1d(1)
         self.mlp = mlp(
-            [num_channels, 2 * num_channels, 3 * num_channels,  3 * num_channels, full_support_size]
+            [
+                num_channels,
+                2 * num_channels,
+                3 * num_channels,
+                3 * num_channels,
+                full_support_size,
+            ]
         )
 
     def forward(self, x):

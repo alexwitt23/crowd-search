@@ -29,7 +29,7 @@ class ORCA:
         self.sim = None
 
     def predict(
-        self, human_states: List["agents.Human"], robot_states: List["agents.Robot"],
+        self, human_states: List[agents.Human], robot_states: List[agents.Robot],
     ) -> None:
         """Create a rvo2 simulation at each time step and run one step
         Python-RVO2 API:

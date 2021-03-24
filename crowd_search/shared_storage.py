@@ -6,8 +6,7 @@ We'd like for the trainer to be able to upload its new policy weights and the
 explorer to upload the history of each new game. We use this object as the
 intermediate step so the other nodes can continue to execute their jobs."""
 
-import copy
-from typing import Dict, List
+from typing import Any, Dict, List
 import uuid
 
 import torch
@@ -19,8 +18,8 @@ class SharedStorage:
     """Shared storage object. Simple interface which basically acts as a
     holding spot for different data in the training pipeline."""
 
-    def __init__(self, max_history_storage: int) -> None:
-        """Initialize the obect."""
+    def __init__(self, max_history_storage: int, policy: Any,) -> None:
+        """Initialize the object."""
         self.history = []
         self.episode_lengths = []
         self.success = 0
@@ -31,6 +30,7 @@ class SharedStorage:
         self.policy_id = None
         self.max_history_storage = max_history_storage
         self.epoch = 0
+        self.policy = policy
 
     def update_policy(self, policy):
         """Recieve a policy object and update local copy."""
@@ -43,42 +43,7 @@ class SharedStorage:
 
     def upload_history(self, history: explorer.GameHistory) -> None:
         """Add history to internal list."""
-        history = copy.deepcopy(history)
-        discounted_rewards = []
-        discounted_reward = 0
-        for idx, reward in enumerate(reversed(history.reward_history)):
-            if idx == 0:
-                discounted_reward = 0
-            discounted_reward = reward + (self.gamma * discounted_reward)
-            discounted_rewards.insert(0, discounted_reward)
-
-        rewards = torch.Tensor(discounted_rewards)
-        if len(discounted_rewards) > 1:
-            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
-
-        # Stack all the robot states and human states
-        robot_states = [state[0] for state in history.observation_history]
-        human_states = [state[1] for state in history.observation_history]
-        actions = history.action_history
-        logprobs = history.logprobs
-
-        datas = []
-        for robot, human, action, reward, ureward, logprob in zip(
-            robot_states, human_states, actions, rewards, discounted_rewards, logprobs
-        ):
-            datas.append(
-                {
-                    "robot_states": robot,
-                    "human_states": human,
-                    "action": action,
-                    "reward": reward,
-                    "undiscounted_reward": torch.Tensor([ureward]),
-                    "logprobs": logprob,
-                }
-            )
-            if len(datas) > self.max_history_storage:
-                break
-
+        datas = self.policy.process_history(history)[: self.max_history_storage]
         self.history.append(datas)
 
         if history.reward_history[-1] == 1.0:
@@ -91,9 +56,11 @@ class SharedStorage:
         self.episode_lengths.append(len(history.logprobs))
 
     def get_history_amount(self) -> int:
+        """Return how much history the storage node currently contains."""
         return sum(len(h) for h in self.history)
 
     def get_history_capacity(self) -> int:
+        """Return how much capacity is possible."""
         return self.max_history_storage
 
     def get_history(self) -> List[Dict[str, torch.Tensor]]:
@@ -121,8 +88,10 @@ class SharedStorage:
         self.collision = 0
         self.episode_lengths = []
 
-    def get_epoch(self):
+    def get_epoch(self) -> int:
+        """Return the current epoch."""
         return self.epoch
 
-    def set_epoch(self, epoch):
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch."""
         self.epoch = epoch
