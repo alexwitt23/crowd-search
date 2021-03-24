@@ -68,7 +68,7 @@ class Trainer:
         self.num_episodes = 0
         self.incentives = cfg.get("incentives")
         train_cfg = cfg.get("training")
-        self.batch_size = train_cfg.get("batch_size")
+        self.batch_size = train_cfg.get("batch-size")
         self.epochs = train_cfg.get("num-epochs")
         # If main node, create a logger
         self.is_main = False

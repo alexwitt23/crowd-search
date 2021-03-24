@@ -57,7 +57,6 @@ class Dataset(data.Dataset):
         """This function takes in a list of data from the various data loading
         threads and combines them all into one batch for training."""
         output = {key: [] for key in self.policy.data_keys}
-
         for data_batch in batches:
             for key in output:
                 output[key].append(data_batch[key])
