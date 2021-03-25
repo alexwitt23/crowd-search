@@ -5,6 +5,7 @@ import random
 from typing import Dict
 
 import gym
+import numpy as np
 import torch
 
 from crowd_search import agents
@@ -54,6 +55,12 @@ class CrowdSim(gym.Env):
         # TODO(alex): Look into different planners. Socialforce models?
         # TODO(alex): build a human policy factory
         self.motion_planner = environment.ORCA(motion_planner_cfg)
+        # TODO(alex): un hardcode
+        self.speed_samples = 5
+        # The number of rotation samples to consider.
+        self.rotation_samples = 16
+
+        self.build_action_space(preferred_velocity=1.0)
 
     def __str__(self) -> str:
         """Print a verbal description of the simulation environment. Can be helpful
@@ -84,8 +91,9 @@ class CrowdSim(gym.Env):
         # Generate random human attributes and make sure the human does not
         # collide with any of the existing humans or robot.
         while True:
-            positionx = random.uniform(-self.world_width, self.world_width)
-            positiony = random.uniform(-self.world_height, self.world_height)
+            positionx = round(random.uniform(-self.world_width, self.world_width), 5)
+            positiony = round(random.uniform(-self.world_height, self.world_height), 5)
+
             for agent in [self.robot] + self.humans:
                 min_dist = (
                     human.get_radius() + agent.get_radius() + self.discomfort_dist
@@ -106,8 +114,12 @@ class CrowdSim(gym.Env):
             position_y=positiony,
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=random.uniform(-self.world_width, self.world_width),
-            goal_position_y=random.uniform(-self.world_height, self.world_height),
+            goal_position_x=round(
+                random.uniform(-self.world_width, self.world_width), 5
+            ),
+            goal_position_y=round(
+                random.uniform(-self.world_height, self.world_height), 5
+            ),
             direction=0.0,
         )
         return human
@@ -121,27 +133,29 @@ class CrowdSim(gym.Env):
 
         pos = [0, 0]
         while True:
-            x = random.uniform(-self.world_width, self.world_width)
+            x = random.uniform(-self.world_width, -1)
             if -1 <= x <= 1:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
-            y = random.uniform(-self.world_height, self.world_height)
+            y = random.uniform(-self.world_height, -1)
             if -1 <= y <= 1:
                 continue
             else:
                 pos[1] = y
                 break
 
+        goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
+        goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
         self.robot.set_state(
-            position_x=pos[0],
-            position_y=pos[1],
+            position_x=2.0,
+            position_y=2.0,
             velocity_x=0.0,
             velocity_y=0.0,
-            goal_position_x=0,
-            goal_position_y=0,
+            goal_position_x=round(goal_x, 5),
+            goal_position_y=round(goal_y, 5),
             direction=0.0,
         )
         # Generate the humans.
@@ -154,7 +168,6 @@ class CrowdSim(gym.Env):
 
         # Reset the human motion planner simulation.
         self.motion_planner.sim = None
-
         return robot_observation
 
     def step(
@@ -193,31 +206,33 @@ class CrowdSim(gym.Env):
 
         reaching_goal = (
             torch.norm(end_position - self.robot.get_goal_position())
-            < self.robot.get_radius()
+            < 2 * self.robot.get_radius()
         )
         dist_to_goal_fut = torch.norm(end_position - self.robot.get_goal_position())
-        # dist_to_goal_now = torch.norm(self.robot.get_goal_position() - self.robot.get_position())
-        # further_away = dist_to_goal_fut > dist_to_goal_now
+        dist_to_goal_now = torch.norm(
+            self.robot.get_goal_position() - self.robot.get_position()
+        )
+        further_away = dist_to_goal_now - dist_to_goal_fut
 
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
-        elif collision:
-            reward = self.collision_penalty
-            done = True
+        # elif collision:
+        #    reward = self.collision_penalty
+        #    done = True
         elif reaching_goal:
             reward = self.success_reward
             done = True
-        elif dmin < self.discomfort_dist:
-            # adjust the reward based on FPS
-            reward = (
-                (dmin - self.discomfort_dist)
-                * self.discomfort_penalty_factor
-                * self.time_step
-            )
-            done = False
+        # elif dmin < self.discomfort_dist:
+        #    # adjust the reward based on FPS
+        #    reward = (
+        #        (dmin - self.discomfort_dist)
+        #        * self.discomfort_penalty_factor
+        #        * self.time_step
+        #    )
+        #    done = False
         else:
-            reward = -0.01
+            reward = 0.0
             done = False
 
         # update all agents
@@ -240,7 +255,32 @@ class CrowdSim(gym.Env):
         return torch.stack([human.get_observable_state() for human in self.humans])
 
     def legal_actions(self):
-        return list(range(41))
+        return len(self.action_space)
 
     def render(self, mode):
         raise NotImplementedError
+
+    def build_action_space(self, preferred_velocity: float):
+        """Given a desired number of speed and rotation samples, build the action
+        space available to the model."""
+
+        # Shift speeds to no 0.0 speed.
+        self.speeds = np.linspace(
+            0, preferred_velocity, self.speed_samples, endpoint=False
+        )
+        self.speeds += self.speeds[1]
+        self.rotations = np.linspace(
+            0, 2 * np.pi, self.rotation_samples, endpoint=False
+        )
+
+        # Add a stop action.
+        self.action_space = [agent_actions.ActionXY(0, 0)]
+
+        for speed in self.speeds:
+            for rotation in self.rotations:
+                self.action_space.append(
+                    agent_actions.ActionXY(
+                        round(speed * np.cos(rotation), 5),
+                        round(speed * np.sin(rotation), 5),
+                    )
+                )

@@ -21,13 +21,13 @@ torch.set_num_threads(1)
 
 
 def _get_learner_explorers(
-    learner_rank: int, num_explorers: int, num_learners: int
+    learner_rank: int, _num_explorers: int, _num_learners: int
 ) -> List[int]:
     """Helper function to assign explorer process ranks to trainers."""
     return list(
         range(
-            (learner_rank * num_explorers) + num_learners,
-            (learner_rank * num_explorers) + num_learners + num_explorers,
+            (learner_rank * _num_explorers) + _num_learners,
+            (learner_rank * _num_explorers) + _num_learners + _num_explorers,
         )
     )
 
@@ -38,7 +38,7 @@ def train(
     num_learners: int,
     num_explorers: int,
     world_size: int,
-    cache_dir: pathlib.Path
+    cache_dir: pathlib.Path,
 ) -> None:
     """Main entrypoint function
 
@@ -66,8 +66,6 @@ def train(
         is_shared_storage = True
         torch.cuda.set_device(-1)
 
-    train_cfg = cfg.get("training")
-
     learner_explorer_groups = {
         learner_rank: _get_learner_explorers(learner_rank, num_explorers, num_learners)
         for learner_rank in range(num_learners)
@@ -92,19 +90,22 @@ def train(
             world_size=world_size,
             rpc_backend_options=rpc_backend_options,
         )
-        trainer_node = trainer.Trainer(
+        run_dir = _LOG_DIR / datetime.datetime.now().isoformat().split(".")[0].replace(
+            ":", "."
+        )
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "config.yaml").write_text(yaml.dump(cfg))
+        print(f"Writting experiment to {run_dir}.")
+        trainer.Trainer(
             cfg=cfg,
             device=device,
             num_learners=num_learners,
             explorer_nodes=learner_explorer_groups[local_rank],
             rank=local_rank,
-            run_dir=_LOG_DIR
-            / datetime.datetime.now().isoformat().split(".")[0].replace(":", "."),
-            batch_size=cfg["training"]["batch-size"],
+            run_dir=run_dir,
             storage_node=storage_node,
             cache_dir=cache_dir,
         )
-        trainer_node.continous_train()
     elif is_shared_storage:
         rpc.init_rpc(
             name=f"Storage:{local_rank}",
@@ -122,7 +123,7 @@ def train(
             rpc_backend_options=rpc_backend_options,
         )
 
-    rpc.shutdown()
+    rpc.shutdown(graceful=True)
 
 
 if __name__ == "__main__":
@@ -135,22 +136,23 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Read config
-    cfg = yaml.safe_load(args.config_path.read_text())
-    train_cfg = cfg.get("training")
-    num_learners = train_cfg.get("num-learners")
-    num_explorers = train_cfg.get("num-explorers")
+    config = yaml.safe_load(args.config_path.read_text())
+    train_cfg = config.get("training")
+    num_learners_ = train_cfg.get("num-learners")
+    num_explorers_ = train_cfg.get("num-explorers")
 
-    world_size = num_learners * num_explorers + num_learners + num_learners
+    world_size_ = num_learners_ * num_explorers_ + num_learners_ + num_learners_
 
-    cache_dir = tempfile.TemporaryDirectory().name
-    cache_dir = pathlib.Path(cache_dir)
-    cache_dir.mkdir(exist_ok=True)
+    cache_dir_ = tempfile.TemporaryDirectory().name
+    cache_dir_ = pathlib.Path(cache_dir_)
+    cache_dir_.mkdir(exist_ok=True)
+
     try:
         multiprocessing.spawn(
             train,
-            (cfg, num_learners, num_explorers, world_size, cache_dir),
-            nprocs=world_size,
+            (config, num_learners_, num_explorers_, world_size_, cache_dir_),
+            nprocs=world_size_,
             join=True,
         )
     finally:
-        shutil.rmtree(cache_dir)
+        shutil.rmtree(cache_dir_)

@@ -8,16 +8,17 @@ The basic idea is the class that executes the training loops. It manages a few t
 2. A copy of the policy. The policy is assumed to contain the necessary prediction methods.
    After a couple epochs, the new policy weights are sent to the explorer nodes that _this_
    trainer node controls.
+
+NOTE: Ideally this trainer script supports any policy, right now it is tied to PPO.
+TODO(alex): Fix the note above.
 """
 import random
 import copy
 import pathlib
-import tempfile
 import time
-import uuid
 from typing import Dict, List
 
-import numpy
+import gym
 import torch
 from torch import nn
 from torch import distributed
@@ -29,13 +30,13 @@ from torch.utils import data
 from crowd_search import dataset
 from crowd_search import distributed_utils
 from crowd_search import explorer
-from crowd_search import policy
-from crowd_search import ppo
 from crowd_search import shared_storage
+from crowd_search.policies import policy_factory
 from crowd_search.visualization import viz
 
 
 class Trainer:
+    """The trainer class."""
     def __init__(
         self,
         cfg: Dict,
@@ -44,47 +45,57 @@ class Trainer:
         explorer_nodes: List[int],
         rank: int,
         run_dir: pathlib.Path,
-        batch_size: int,
         storage_node: int,
         cache_dir: pathlib.Path,
     ) -> None:
+        """
+        Args:
+            cfg: The configuration dictionary read in from the supplied .yaml file.
+            device: The device to use for this trainer.
+            num_learners: How many other learner (a.k.a.) trainer nodes there are.
+            explorer_nodes: A list of the node ranks of the explorer nodes that are
+                tied to this explorer node.
+            rank: The global rank of this trainer node.
+            run_dir: Where to write results during training.
+            storage_node: The node rank of the associated storage node.
+            cache_dir: Where to save intermediate results to. This is for the dataset.
+        """
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
-        self.epochs = 8000
         self.device = device
         self.num_learners = num_learners
-        self.batch_size = batch_size
         self.run_dir = run_dir
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self.eps_clip = 0.2
         self.num_episodes = 0
         self.incentives = cfg.get("incentives")
+        train_cfg = cfg.get("training")
+        self.batch_size = train_cfg.get("batch-size")
+        self.epochs = train_cfg.get("num-epochs")
         # If main node, create a logger
         self.is_main = False
         if rank == 0:
             self.logger = tensorboard.SummaryWriter(run_dir)
             self.is_main = True
-
+        self.rank = rank
         # Create the policy
-        self.policy = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            cfg.get("action-space"),
-            device,
+        environment = gym.make(
+            "CrowdSim-v1",
+            env_cfg=cfg.get("sim-environment"),
+            incentive_cfg=cfg.get("incentives"),
+            motion_planner_cfg=cfg.get("human-motion-planner"),
+            human_cfg=cfg.get("human"),
+            robot_cfg=cfg.get("robot"),
         )
-        self.policy_old = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            cfg.get("action-space"),
-            device,
-        )
+        kwargs = {"device": self.device, "action_space": environment.action_space}
+
+        if self.is_main:
+            print(f">> Using policy: {cfg.get('policy').get('type')}.")
+
+        self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
+        self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.policy.to(self.device)
         self.policy_old.to(self.device)
+        self.visualize_results = train_cfg.get("visualize-results")
 
         if num_learners > 1:
             if torch.cuda.is_available():
@@ -96,16 +107,27 @@ class Trainer:
                     self.policy, device_ids=None, find_unused_parameters=True
                 )
 
-        self.optimizer = torch.optim.Adam(
-            self.policy.parameters(), lr=2.0e-3, weight_decay=0.0, betas=(0.9, 0.999)
-        )
+        optimizer_cfg = train_cfg.get("optimizer")
+        optimizer_kwargs = optimizer_cfg.get("kwargs")
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), **optimizer_kwargs)
+
+        self.epoch = 0
         self.training_step = 0
-        self.dataset = dataset.Dataset(cache_dir)
+        self.dataset = dataset.Dataset(
+            cache_dir, policy_factory.get_policy(cfg.get("policy").get("type"))
+        )
         self.cache_dir = cache_dir
         self.explorer_references = []
 
         storage_info = rpc.get_worker_info(f"Storage:{storage_node}")
-        self.storage_node = rpc.remote(storage_info, shared_storage.SharedStorage)
+        self.storage_node = rpc.remote(
+            storage_info,
+            shared_storage.SharedStorage,
+            args=(
+                train_cfg.get("max-storage-memory"),
+                policy_factory.get_policy(cfg.get("policy").get("type")),
+            ),
+        )
 
         for explorer_node in explorer_nodes:
             explorer_info = rpc.get_worker_info(f"Explorer:{explorer_node}")
@@ -116,10 +138,10 @@ class Trainer:
             )
         self.global_step = 0
 
-        self.MseLoss = nn.MSELoss()
+        self.mse_loss = nn.MSELoss()
         # Update explorers with initial policy weights
         self._send_policy()
-        self._get_history()
+        self.continous_train()
 
     def _send_policy(self):
         model = copy.deepcopy(distributed_utils.unwrap_ddp(self.policy_old))
@@ -128,42 +150,64 @@ class Trainer:
 
     def _get_history(self):
 
-        new_history = []
-        while not new_history:
-            new_history = self.storage_node.rpc_sync().get_history()
-            time.sleep(1.0)
+        new_histories = []
+        while not new_histories:
+            (
+                new_histories,
+                mean_times,
+                success,
+                timeout,
+                collision,
+            ) = self.storage_node.rpc_sync().get_history()
+            time.sleep(2.0)
 
         self.storage_node.rpc_sync().clear_history()
-        self._combine_datasets(new_history)
 
-        
-        average_rewards = [
-            numpy.mean(history.reward_history) for history in new_history
-        ]
-        max_rewards = [numpy.max(history.reward_history) for history in new_history]
-        sim_time = numpy.mean([len(history.reward_history) for history in new_history])
+        datas = []
+        for history in new_histories:
+            for data in history:
+                datas.append(data["undiscounted_reward"])
+        average_rewards = torch.mean(torch.stack(datas))
+
         if self.is_main:
             self.logger.add_scalar(
-                "explorer/avg_reward", numpy.mean(average_rewards), self.global_step
+                "explorer/avg_reward", average_rewards, self.global_step
             )
             self.logger.add_scalar(
-                "explorer/max_reward", numpy.sum(max_rewards), self.global_step
+                "explorer/avg_sim_time", mean_times, self.global_step
             )
-            self.logger.add_scalar("explorer/avg_sim_time", sim_time, self.global_step)
+            self.logger.add_scalar(
+                "explorer/success_frac", success, self.global_step,
+            )
+            self.logger.add_scalar(
+                "explorer/collision_frac", collision, self.global_step,
+            )
+            self.logger.add_scalar(
+                "explorer/timeout_frac", timeout, self.global_step,
+            )
+        self._combine_datasets(new_histories)
+        if distributed.is_initialized():
+            distributed.barrier()
 
-
-    def _combine_datasets(self, histories: List):
+    def _combine_datasets(self, histories: List[List[Dict[str, torch.Tensor]]]):
         """Called after new history is acquired from local storage node. We want to
         send all new history to each other trainer node."""
 
-        if self.is_main:
+        if self.is_main and self.visualize_results:
             reached_goal = []
             collision = []
             timeout = []
+
             for idx, history in enumerate(histories):
-                if self.incentives.get("success") in history.reward_history:
+                if (
+                    self.incentives.get("success")
+                    == history[-1]["undiscounted_reward"].item()
+                ):
                     reached_goal.append(idx)
-                elif self.incentives.get("collision") in history.reward_history:
+                elif (
+                    self.incentives.get("collision")
+                    == history[-1]["undiscounted_reward"].item()
+                ):
                     collision.append(idx)
                 else:
                     timeout.append(idx)
@@ -184,39 +228,12 @@ class Trainer:
                     histories[idx], self.run_dir / f"plots/{self.global_step}_c.gif",
                 )
 
-            self.logger.add_scalar(
-                "explorer/success_frac",
-                len(reached_goal) / len(histories),
-                self.global_step,
-            )
-            self.logger.add_scalar(
-                "explorer/collision_frac",
-                len(collision) / len(histories),
-                self.global_step,
-            )
-            self.logger.add_scalar(
-                "explorer/timeout_frac",
-                len(timeout) / len(histories),
-                self.global_step,
-            )
-
-            # Clear old data
-            for item in self.cache_dir.glob("*"):
-                item.unlink()
-
-        # If not main, wait until the cache dir is cleared
-        while True:
-            items = list(self.cache_dir.glob("*"))
-            if not items:
-                break
-
-        self.dataset.update(histories)
+        self.dataset.update(histories, self.epoch, self.is_main)
         if distributed.is_initialized():
             distributed.barrier()
 
     def get_items(self):
-        if self.is_main:
-            self.dataset.items = list(self.cache_dir.glob("*"))
+        self.dataset.prepare_for_epoch()
         if distributed.is_initialized():
             distributed.barrier()
 
@@ -229,12 +246,15 @@ class Trainer:
         weights."""
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
+            self.epoch = epoch
+            self._get_history()
+            self.storage_node.rpc_sync().set_epoch(epoch + 1)
             # Update memory from explorer workers
             if self.is_main:
                 print(f"Starting epoch {epoch}.")
-            
+
             self.get_items()
-    
+
             if self.num_learners > 1:
                 sampler = data.distributed.DistributedSampler(
                     self.dataset, shuffle=True
@@ -247,49 +267,16 @@ class Trainer:
                 pin_memory=True,
                 num_workers=0,
                 sampler=sampler,
-                collate_fn=dataset.collate,
+                collate_fn=self.dataset.collate,
             )
-            for mini_epoch in range(5):
+            for mini_epoch in range(10):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
-                    (
-                        robot_state_batch,
-                        human_state_batch,
-                        action_batch,
-                        target_reward,
-                        logprobs_batch,
-                    ) = batch
-                    robot_state_batch = robot_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    human_state_batch = human_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    action_batch = action_batch.to(self.device)
-                    target_reward = target_reward.to(self.device).squeeze(-1)
-                    logprobs_batch = logprobs_batch.to(self.device).squeeze(-1)
+                    loss = self.policy.process_batch(batch)
 
-                    logprobs, state_values, dist_entropy = distributed_utils.unwrap_ddp(
-                        self.policy
-                    ).evaluate(robot_state_batch, human_state_batch, action_batch)
-
-                    # Finding the ratio (pi_theta / pi_theta__old):
-                    ratios = torch.exp(logprobs - logprobs_batch.detach())
-
-                    # Finding Surrogate Loss:
-                    advantages = target_reward - state_values.detach()
-                    surr1 = ratios * advantages
-                    surr2 = (
-                        torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                        * advantages
-                    )
-                    loss = (
-                        -torch.min(surr1, surr2)
-                        + 0.5 * self.MseLoss(state_values, target_reward)
-                        - 0.01 * dist_entropy
-                    )
-                    loss = loss.mean()
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        raise ValueError("Loss blew up.")
 
                     # Optimize
                     self.optimizer.zero_grad()
@@ -311,5 +298,7 @@ class Trainer:
             self.policy_old.load_state_dict(
                 distributed_utils.unwrap_ddp(self.policy).state_dict()
             )
-            self._get_history()
             self._send_policy()
+
+        if self.is_main:
+            print("Training complete.")

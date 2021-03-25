@@ -1,22 +1,20 @@
 """Explorer objects which maintain a copy of the environment."""
-import math
 import copy
-from typing import Dict, List
+import math
+import time
 
-import numpy
 import gym
 import torch
 from torch.distributed import rpc
 
 from crowd_search import agents
-from crowd_search import policy
-from crowd_search import ppo
+from crowd_search.policies import policy_factory
 from third_party.crowd_sim.envs.utils.agent_actions import ActionXY
 
 
 class Explorer:
     def __init__(self, cfg, storage_node) -> None:
-        """Initialize Explorer.z
+        """Initialize Explorer.
 
         Args:
             environment: The simulation environment to be explored.
@@ -36,31 +34,37 @@ class Explorer:
         )
 
         self.robot = agents.Robot(cfg.get("robot"))
-        self.policy = ppo.PPO(
-            cfg.get("models"),
-            cfg.get("robot"),
-            cfg.get("human"),
-            cfg.get("incentives"),
-            cfg.get("action-space"),
-            "cpu",
-        )
+
+        kwargs = {
+            "device": torch.device("cpu"),
+            "action_space": self.environment.action_space,
+        }
+        self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
+        self.policy_id = None
         self.storage_node = storage_node
         self._update_policy()
+        self.num_epochs = cfg.get("training").get("num-epochs")
         self.run_continuous_episode()
 
     def _update_policy(self):
         new_policy = None
         while new_policy is None:
-            new_policy = self.storage_node.rpc_sync().get_policy()
-        self.policy.load_state_dict(new_policy.state_dict())
-        self.policy.eval()
+            new_policy, policy_id = self.storage_node.rpc_sync().get_policy()
+            time.sleep(2.0)
+
+        # If same policy, keep exploring
+        if self.policy_id == policy_id:
+            return
+        else:
+            self.policy_id = policy_id
+            self.policy.load_state_dict(copy.deepcopy(new_policy.state_dict()))
+            self.policy.eval()
 
     @torch.no_grad()
     def run_continuous_episode(self):
         """Run a single episode of the crowd search game."""
 
         while True:
-            states, actions, rewards, logprobs = [], [], [], []
             simulation_done = False
             # Reset the environment at the beginning of each episode and add initial
             # information to replay memory.
@@ -70,31 +74,39 @@ class Explorer:
             # Loop over simulation steps until we are done. The simulation terminates
             # when the goal is reached or some timeout based on the number of steps.
             while not simulation_done:
-
                 robot_state = copy.deepcopy(self.environment.robot.get_full_state())
-                game_history.observation_history.append((robot_state, observation))
-                action, action_log_prob = self.policy.act(
+                game_history.observation_history.append(
+                    (robot_state, copy.deepcopy(observation))
+                )
+                action_tensor, action, action_log_prob = self.policy.act(
                     robot_state.unsqueeze(-1), observation.unsqueeze(-1)
                 )
-                # action = action
-                observation, reward, simulation_done = self.environment.step(
-                    ActionXY(action[0, 0], action[0, 1])
-                )
+                observation, reward, simulation_done = self.environment.step(action)
                 game_history.reward_history.append(copy.deepcopy(reward))
-                game_history.action_history.append(copy.deepcopy(action))
+                game_history.action_history.append(action_tensor)
                 game_history.logprobs.append(copy.deepcopy(action_log_prob))
 
             self.send_history(game_history)
             self._update_policy()
 
+            if self.storage_node.rpc_sync().get_epoch() == self.num_epochs:
+
+                return
+
+            while (
+                self.storage_node.rpc_sync().get_history_amount()
+                > self.storage_node.rpc_sync().get_history_capacity()
+            ):
+                time.sleep(5.0)
+                if self.storage_node.rpc_sync().get_epoch() > self.num_epochs:
+                    return
+
     def send_history(self, history):
-        self.storage_node.rpc_sync().upload_history(history)
+        self.storage_node.rpc_async().upload_history(history)
 
 
 class GameHistory:
-    """
-    Store only usefull information of a self-play game.
-    """
+    """Store only usefull information of a self-play game. """
 
     def __init__(self):
         self.observation_history = []
