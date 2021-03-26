@@ -26,6 +26,7 @@ from torch.distributed import rpc
 from torch.nn import parallel
 from torch.utils import tensorboard
 from torch.utils import data
+import yaml
 
 from crowd_search import dataset
 from crowd_search import distributed_utils
@@ -138,6 +139,8 @@ class Trainer:
                     explorer_info, explorer.Explorer, args=(cfg, self.storage_node)
                 )
             )
+        self.best_success = 0.0
+        self.best_metrics = self.run_dir / "best-metrics.yaml"
         self.global_step = 0
 
         self.mse_loss = nn.MSELoss()
@@ -187,6 +190,16 @@ class Trainer:
             self.logger.add_scalar(
                 "explorer/timeout_frac", timeout, self.global_step,
             )
+
+            if success > self.best_success:
+                self.best_success = success
+                torch.save(
+                    distributed_utils.unwrap_ddp(self.policy_old).state_dict(),
+                    self.run_dir / "best_success.pt",
+                )
+                self.best_metrics.write_text(yaml.dump({"success-rate": success}))
+
+
         self._combine_datasets(new_histories)
         if distributed.is_initialized():
             distributed.barrier()
