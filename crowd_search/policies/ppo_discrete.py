@@ -67,6 +67,7 @@ class DiscretePPO(base_policy.BasePolicy):
         self.dynamics_reward_network = models.DynamicsNetwork(
             models_cfg.get("gnn-output-depth"), 1
         )
+        self.eps_clip = 0.2
 
     def forward(self):
         """Defined since this object inherits nn.Module."""

@@ -92,6 +92,8 @@ class Trainer:
 
         self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
+        if self.is_main:
+            print(f">> Model: {self.policy}")
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.policy.to(self.device)
         self.policy_old.to(self.device)
@@ -247,6 +249,10 @@ class Trainer:
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
             self.epoch = epoch
+
+            while self.storage_node.rpc_sync().get_num_episodes() < 10:
+                time.sleep(5.0)
+
             self._get_history()
             self.storage_node.rpc_sync().set_epoch(epoch + 1)
             # Update memory from explorer workers
@@ -268,8 +274,9 @@ class Trainer:
                 num_workers=0,
                 sampler=sampler,
                 collate_fn=self.dataset.collate,
+                drop_last=True
             )
-            for mini_epoch in range(10):
+            for mini_epoch in range(5):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:

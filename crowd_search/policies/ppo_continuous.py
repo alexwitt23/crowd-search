@@ -66,7 +66,7 @@ class ContinuousPPO(base_policy.BasePolicy):
             models_cfg.get("gnn-output-depth"), 1
         )
         self.action_var = torch.full((2,), 0.5 ** 2)
-        self.eps_clip = 0.2
+        self.eps_clip = 0.1
 
     @torch.no_grad()
     def act(self, robot_state: torch.Tensor, human_states: torch.Tensor):
@@ -159,6 +159,7 @@ class ContinuousPPO(base_policy.BasePolicy):
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         # TODO(alex): Maybe need to tweak these weights?
+
         loss = (
             -torch.min(surr1, surr2)
             + 0.5 * nn.functional.mse_loss(state_values, target_reward)

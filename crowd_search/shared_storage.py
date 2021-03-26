@@ -46,7 +46,7 @@ class SharedStorage:
         datas = self.policy.process_history(history)[: self.max_history_storage]
         self.history.append(datas)
 
-        if history.reward_history[-1] == 1.0:
+        if history.reward_history[-1] == 230.0:
             self.success += 1
         elif history.reward_history[-1] == 0.0:
             self.timeout += 1
@@ -95,3 +95,6 @@ class SharedStorage:
     def set_epoch(self, epoch: int) -> None:
         """Set the epoch."""
         self.epoch = epoch
+
+    def get_num_episodes(self):
+        return len(self.episode_lengths)

@@ -12,21 +12,22 @@ training:
   # doing all CPU training.
   num-learners: 1
   # The number separate processes for exploring the environment _per learner node_.
-  num-explorers: 1
+  num-explorers: 10
   # The batch size on one training node (the same for all trainers)
   batch-size: 2000
   # Set the maximum of history the storage node will hold. This sets a hard max limit
   # on memory usage:
-  max-storage-memory: 2000
+  max-storage-memory: 20000000
   # Whether or not to write gifs of the simulation environment
-  visualize-results: true
+  visualize-results: false
   # Optimizer configuration
   optimizer:
     type: "Adam"  # CURRENTLY UNUSED
     # This is directly passed in as **kwargs to whatever optimizer is selected.
     kwargs:
-      lr: 1.0e-4
-      weight_decay: 1.0e-5
+      lr: 0.002
+      weight_decay: 0.0
+      betas: [0.9, 0.999]
 
 # These are params sent to the crowd_sim environment
 sim-environment:
@@ -35,10 +36,10 @@ sim-environment:
   # The time step used to update pos + vel * (dt)
   time-step: *time_step
   # The number of humans in the simulation TODO(alex): What about a random amount?
-  num-humans: 1
+  num-humans: 2
   
-  world-width: 20.0
-  world-height: 20.0
+  world-width: 8.0
+  world-height: 8.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
   goal-location-width: 0.0
@@ -81,9 +82,9 @@ human-motion-planner:
 # based on social forces.
 incentives: &incentives_cfg
   # Reaching goal is rewarded
-  success: 1.0
+  success: 230.0
   # Collision is penalized
-  collision: -0.25
+  collision: -100
   # Keep the robot from coming to close to other agents.
   discomfort-distance: 0.2
   # TODO(alex): What is this?
@@ -108,7 +109,7 @@ robot: &robot_cfg
 
 
 policy:
-  type: "ContinuousPPO"
+  type: "DiscretePPO"
 
   # Define the various models used during training.
   models_cfg:
@@ -124,7 +125,7 @@ policy:
       human-state-dimension: 5
       # The human and robot states are passed through a MLP to get equal output channels.
       # The last dimension here is used as the node channel depth in the graph network.
-      mlp-layer-channels: [32, 32, *output-dim]
+      mlp-layer-channels: [8, 16, *output-dim]
       # The number of layers in the graph model.
       gnn-layers: 6
     

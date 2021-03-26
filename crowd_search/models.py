@@ -24,7 +24,7 @@ def mlp(channels: list):
     for i in range(1, len(channels)):
         layers.append(nn.Conv1d(channels[i - 1], channels[i], kernel_size=1, bias=True))
         if i < (len(channels) - 1):
-            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.Tanh())
     return nn.Sequential(*layers)
 
 
@@ -127,14 +127,12 @@ class PredictionNetwork(nn.Module):
             [
                 input_state_dim,
                 2 * input_state_dim,
-                3 * input_state_dim,
-                3 * input_state_dim,
                 out_size,
             ]
         )
         self.avg = nn.AdaptiveAvgPool1d(1)
         self.action_head = nn.Sequential(
-            nn.Linear(out_size, action_space, bias=False), nn.Tanh()
+            nn.Linear(out_size, action_space, bias=False)
         )
 
     def forward(
@@ -160,8 +158,6 @@ class DynamicsNetwork(nn.Module):
             [
                 num_channels,
                 2 * num_channels,
-                3 * num_channels,
-                3 * num_channels,
                 full_support_size,
             ]
         )

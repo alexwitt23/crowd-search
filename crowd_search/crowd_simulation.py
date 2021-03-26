@@ -2,6 +2,7 @@
 that our robot(s) can navigate through."""
 
 import random
+import time
 from typing import Dict
 
 import gym
@@ -58,8 +59,8 @@ class CrowdSim(gym.Env):
         # TODO(alex): un hardcode
         self.speed_samples = 5
         # The number of rotation samples to consider.
-        self.rotation_samples = 16
-
+        self.rotation_samples = 4
+        self.start_time = time.perf_counter()
         self.build_action_space(preferred_velocity=1.0)
 
     def __str__(self) -> str:
@@ -100,7 +101,7 @@ class CrowdSim(gym.Env):
                 )
                 position = torch.Tensor([positionx, positiony])
                 if torch.norm(position - agent.get_position()) < min_dist:
-                    # Collide, generate another human
+                    # Collide, generate another human or the robot
                     break
             else:
                 # No collision with any other human or robot, set this human state.
@@ -133,15 +134,15 @@ class CrowdSim(gym.Env):
 
         pos = [0, 0]
         while True:
-            x = random.uniform(-self.world_width, -1)
-            if -1 <= x <= 1:
+            x = random.uniform(-self.world_width, self.world_width)
+            if -0.5 <= x <= 0.5:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
-            y = random.uniform(-self.world_height, -1)
-            if -1 <= y <= 1:
+            y = random.uniform(-self.world_height, self.world_height)
+            if -0.5 <= y <= 0.5:
                 continue
             else:
                 pos[1] = y
@@ -149,9 +150,14 @@ class CrowdSim(gym.Env):
 
         goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
         goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
+        
+        #if time.perf_counter() - self.start_time < 2000:
+        x = 1.0
+        y = 1.0
+
         self.robot.set_state(
-            position_x=2.0,
-            position_y=2.0,
+            position_x=x,
+            position_y=y,
             velocity_x=0.0,
             velocity_y=0.0,
             goal_position_x=round(goal_x, 5),
