@@ -106,13 +106,12 @@ class GNN(nn.Module):
     def forward(self, robot_state: torch.Tensor, human_state: torch.Tensor):
         """TODO(alex): docstring"""
         robot_state = self.robot_mlp(robot_state)
-        human_state = self.human_mlp(human_state)
+        # human_state = self.human_mlp(human_state)
         # Concatenate the state tensors together
-        combined_state = torch.cat([robot_state, human_state], dim=-1)
-        for layer in self.attn_layers:
-            combined_state = layer(combined_state, combined_state)
-
-        return combined_state
+        # combined_state = torch.cat([robot_state, human_state], dim=-1)
+        # for layer in self.attn_layers:
+        #    combined_state = layer(combined_state, combined_state)
+        return robot_state
 
 
 # Similar to:
@@ -123,11 +122,18 @@ class PredictionNetwork(nn.Module):
     def __init__(self, input_state_dim: int, action_space: int) -> None:
         """TODO(alex): docstring"""
         super().__init__()
-        out_size = 2 * input_state_dim
-        self.action_predictor = mlp([input_state_dim, 2 * input_state_dim, 3 * input_state_dim, 3 * input_state_dim, out_size])
+        out_size = 4 * input_state_dim
+        self.action_predictor = mlp(
+            [
+                input_state_dim,
+                2 * input_state_dim,
+                4 * input_state_dim,
+                4 * input_state_dim,
+            ]
+        )
         self.avg = nn.AdaptiveAvgPool1d(1)
         self.action_head = nn.Sequential(
-            nn.Linear(out_size, action_space, bias=False), nn.Tanh()
+            nn.Linear(out_size, action_space, bias=False)
         )
 
     def forward(
@@ -140,7 +146,7 @@ class PredictionNetwork(nn.Module):
 
 # Similar to:
 # https://github.com/werner-duvaud/muzero-general/blob/97e4931617e789e6880c87769d348d53dba20897/models.py#L352
-class DynamicsNetwork(torch.nn.Module):
+class DynamicsNetwork(nn.Module):
     """TODO(alex): docstring"""
 
     def __init__(
@@ -150,7 +156,13 @@ class DynamicsNetwork(torch.nn.Module):
         super().__init__()
         self.avg = nn.AdaptiveAvgPool1d(1)
         self.mlp = mlp(
-            [num_channels, 2 * num_channels, 3 * num_channels,  3 * num_channels, full_support_size]
+            [
+                num_channels,
+                2 * num_channels,
+                4 * num_channels,
+                4 * num_channels,
+                full_support_size,
+            ]
         )
 
     def forward(self, x):

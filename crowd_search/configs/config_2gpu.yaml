@@ -109,7 +109,7 @@ robot: &robot_cfg
 
 
 policy:
-  type: "PPO"
+  type: "ContinuousPPO"
 
   # Define the various models used during training.
   models_cfg:

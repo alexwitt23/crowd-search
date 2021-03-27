@@ -8,6 +8,9 @@ The basic idea is the class that executes the training loops. It manages a few t
 2. A copy of the policy. The policy is assumed to contain the necessary prediction methods.
    After a couple epochs, the new policy weights are sent to the explorer nodes that _this_
    trainer node controls.
+
+NOTE: Ideally this trainer script supports any policy, right now it is tied to PPO.
+TODO(alex): Fix the note above.
 """
 import random
 import copy
@@ -23,6 +26,7 @@ from torch.distributed import rpc
 from torch.nn import parallel
 from torch.utils import tensorboard
 from torch.utils import data
+import yaml
 
 from crowd_search import dataset
 from crowd_search import distributed_utils
@@ -33,6 +37,7 @@ from crowd_search.visualization import viz
 
 
 class Trainer:
+    """The trainer class."""
     def __init__(
         self,
         cfg: Dict,
@@ -41,20 +46,30 @@ class Trainer:
         explorer_nodes: List[int],
         rank: int,
         run_dir: pathlib.Path,
-        batch_size: int,
         storage_node: int,
         cache_dir: pathlib.Path,
     ) -> None:
+        """
+        Args:
+            cfg: The configuration dictionary read in from the supplied .yaml file.
+            device: The device to use for this trainer.
+            num_learners: How many other learner (a.k.a.) trainer nodes there are.
+            explorer_nodes: A list of the node ranks of the explorer nodes that are
+                tied to this explorer node.
+            rank: The global rank of this trainer node.
+            run_dir: Where to write results during training.
+            storage_node: The node rank of the associated storage node.
+            cache_dir: Where to save intermediate results to. This is for the dataset.
+        """
         self.cfg = cfg
         self.explorer_nodes = explorer_nodes
         self.device = device
         self.num_learners = num_learners
-        self.batch_size = batch_size
         self.run_dir = run_dir
-        self.eps_clip = 0.2
         self.num_episodes = 0
         self.incentives = cfg.get("incentives")
         train_cfg = cfg.get("training")
+        self.batch_size = train_cfg.get("batch-size")
         self.epochs = train_cfg.get("num-epochs")
         # If main node, create a logger
         self.is_main = False
@@ -63,7 +78,7 @@ class Trainer:
             self.is_main = True
         self.rank = rank
         # Create the policy
-        environment = gym.make(
+        self.environment = gym.make(
             "CrowdSim-v1",
             env_cfg=cfg.get("sim-environment"),
             incentive_cfg=cfg.get("incentives"),
@@ -71,9 +86,15 @@ class Trainer:
             human_cfg=cfg.get("human"),
             robot_cfg=cfg.get("robot"),
         )
-        kwargs = {"device": self.device, "action_space": environment.action_space}
+        kwargs = {"device": self.device, "action_space": self.environment.action_space}
+
+        if self.is_main:
+            print(f">> Using policy: {cfg.get('policy').get('type')}.")
+
         self.policy = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
         self.policy_old = policy_factory.make_policy(cfg.get("policy"), kwargs=kwargs)
+        if self.is_main:
+            print(f">> Model: {self.policy}")
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.policy.to(self.device)
         self.policy_old.to(self.device)
@@ -95,7 +116,9 @@ class Trainer:
 
         self.epoch = 0
         self.training_step = 0
-        self.dataset = dataset.Dataset(cache_dir)
+        self.dataset = dataset.Dataset(
+            cache_dir, policy_factory.get_policy(cfg.get("policy").get("type"))
+        )
         self.cache_dir = cache_dir
         self.explorer_references = []
 
@@ -103,7 +126,10 @@ class Trainer:
         self.storage_node = rpc.remote(
             storage_info,
             shared_storage.SharedStorage,
-            args=(train_cfg.get("max-storage-memory"),),
+            args=(
+                train_cfg.get("max-storage-memory"),
+                policy_factory.get_policy(cfg.get("policy").get("type")),
+            ),
         )
 
         for explorer_node in explorer_nodes:
@@ -113,6 +139,9 @@ class Trainer:
                     explorer_info, explorer.Explorer, args=(cfg, self.storage_node)
                 )
             )
+        self.shortest_steps = float("inf")
+        self.best_success = 0.0
+        self.best_metrics = self.run_dir / "best-metrics.yaml"
         self.global_step = 0
 
         self.mse_loss = nn.MSELoss()
@@ -162,6 +191,16 @@ class Trainer:
             self.logger.add_scalar(
                 "explorer/timeout_frac", timeout, self.global_step,
             )
+
+            if success > self.best_success:
+                self.best_success = success
+                torch.save(
+                    distributed_utils.unwrap_ddp(self.policy_old).state_dict(),
+                    self.run_dir / "best_success.pt",
+                )
+                self.best_metrics.write_text(yaml.dump({"success-rate": success}))
+
+
         self._combine_datasets(new_histories)
         if distributed.is_initialized():
             distributed.barrier()
@@ -224,6 +263,10 @@ class Trainer:
         # Wait for the first round of explorations to come back from explorers.
         for epoch in range(self.epochs):
             self.epoch = epoch
+
+            while self.storage_node.rpc_sync().get_num_episodes() < 100:
+                time.sleep(5.0)
+
             self._get_history()
             self.storage_node.rpc_sync().set_epoch(epoch + 1)
             # Update memory from explorer workers
@@ -244,68 +287,15 @@ class Trainer:
                 pin_memory=True,
                 num_workers=0,
                 sampler=sampler,
-                collate_fn=dataset.collate,
-                
+                collate_fn=self.dataset.collate,
+                drop_last=True
             )
-            for mini_epoch in range(10):
+            for mini_epoch in range(5):
                 if hasattr(sampler, "set_epoch"):
                     sampler.set_epoch(mini_epoch)
                 for batch in loader:
-                    (
-                        robot_state_batch,
-                        human_state_batch,
-                        action_batch,
-                        target_reward,
-                        logprobs_batch,
-                    ) = batch
-                    robot_state_batch = robot_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    human_state_batch = human_state_batch.to(self.device).transpose(
-                        1, 2
-                    )
-                    action_batch = action_batch.to(self.device)
-                    target_reward = target_reward.to(self.device).squeeze(-1)
-                    logprobs_batch = logprobs_batch.to(self.device).squeeze(-1)
+                    loss = self.policy.process_batch(batch)
 
-                    logprobs, state_values, dist_entropy = distributed_utils.unwrap_ddp(
-                        self.policy
-                    ).evaluate(robot_state_batch, human_state_batch, action_batch)
-
-                    # Finding the ratio (pi_theta / pi_theta__old):
-                    ratios = torch.exp(logprobs - logprobs_batch.detach())
-
-                    # Finding Surrogate Loss:
-                    advantages = target_reward - state_values.detach()
-                    surr1 = ratios * advantages
-                    surr2 = (
-                        torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                        * advantages
-                    )
-                    # TODO(alex): Maybe need to tweak these weights?
-                    loss = (
-                        -torch.min(surr1, surr2)
-                        + 0.5 * self.mse_loss(state_values, target_reward)
-                        - 0.01 * dist_entropy
-                    )
-                    loss = loss.mean()
-
-                    if torch.isnan(robot_state_batch).any():
-                        raise ValueError("robot_state_batch is nan")
-                    if torch.isnan(human_state_batch).any():
-                        raise ValueError("human_state_batch is nan")
-                    if torch.isnan(action_batch).any():
-                        raise ValueError("action_batch is nan")
-                    if torch.isnan(target_reward).any():
-                        raise ValueError("target_reward is nan")
-                    if torch.isnan(logprobs_batch).any():
-                        raise ValueError("logprobs_batch is nan")
-                    if torch.isnan(logprobs).any():
-                        raise ValueError("logprobs is nan")
-                    if torch.isnan(state_values).any():
-                        raise ValueError("state_values is nan")
-                    if torch.isnan(dist_entropy).any():
-                        raise ValueError("dist_entropy is nan")
                     if torch.isnan(loss) or torch.isinf(loss):
                         raise ValueError("Loss blew up.")
 
@@ -330,6 +320,41 @@ class Trainer:
                 distributed_utils.unwrap_ddp(self.policy).state_dict()
             )
             self._send_policy()
+
+
+            simulation_done = False
+            observation = self.environment.reset()
+
+            # Loop over simulation steps until we are done. The simulation terminates
+            # when the goal is reached or some timeout based on the number of steps.
+            steps = 0
+            histories = []
+            while not simulation_done:
+                robot_state = self.environment.robot.get_full_state()
+                history = {}
+                history["robot_states"] = robot_state
+                history["human_states"] = observation
+                histories.append(history)
+                action = distributed_utils.unwrap_ddp(self.policy).act_static(
+                    robot_state.unsqueeze(-1).to(self.device), observation.unsqueeze(-1).to(self.device)
+                )
+                observation, reward, simulation_done = self.environment.step(action)
+                steps += 1
+            print(f"Completed test environment in {steps} steps.")
+            if steps < 100:
+                viz.plot_history(histories, pathlib.Path(self.run_dir / f"{self.global_step}.gif"))
+
+            if steps < self.shortest_steps:
+                self.shortest_steps = steps
+                print(f">> New Best: Completed test environment in {steps} steps.")
+
+                torch.save(
+                    distributed_utils.unwrap_ddp(self.policy_old).state_dict(),
+                    self.run_dir / "fewest_steps.pt",
+                )
+                self.best_metrics.write_text(yaml.dump({"fewest-steps": steps}))
+
+
 
         if self.is_main:
             print("Training complete.")

@@ -1,7 +1,7 @@
 """Continous PPO RL policy."""
 
 import copy
-from typing import Dict
+from typing import Dict, List
 
 import torch
 from torch import nn
@@ -13,7 +13,7 @@ from third_party.crowd_sim.envs.utils import agent_actions
 from crowd_search.policies import base_policy
 
 
-class ContinuousPPO(base_policy.BasePolicy):
+class DiscretePPO(base_policy.BasePolicy):
     """Describe the policy that governs the robot's decisions."""
 
     data_keys = [
@@ -32,6 +32,7 @@ class ContinuousPPO(base_policy.BasePolicy):
         human_cfg: Dict,
         incentive_cfg: Dict,
         device: torch.device,
+        action_space: List[agent_actions.ActionXY] = None,
         **kwargs
     ) -> None:
         """Initialize the PPO"""
@@ -43,6 +44,7 @@ class ContinuousPPO(base_policy.BasePolicy):
         self.discomfort_distance = incentive_cfg.get("discomfort-distance")
         self.discomfort_distance_factor = incentive_cfg.get("discomfort-penalty-factor")
         self.device = device
+        self.action_space = action_space
 
         # Build the different models.
         gnn_cfg = models_cfg.get("gnn")
@@ -57,7 +59,7 @@ class ContinuousPPO(base_policy.BasePolicy):
 
         self.v_pref = 1.0
         self.action_predictor = models.PredictionNetwork(
-            models_cfg.get("gnn-output-depth"), action_space=2
+            models_cfg.get("gnn-output-depth"), len(self.action_space)
         )
         self.action_predictor.to(self.device)
         self.action_predictor.train()
@@ -65,43 +67,25 @@ class ContinuousPPO(base_policy.BasePolicy):
         self.dynamics_reward_network = models.DynamicsNetwork(
             models_cfg.get("gnn-output-depth"), 1
         )
-        self.action_var = torch.full((2,), 0.5 ** 2)
-        self.eps_clip = 0.1
+        self.eps_clip = 0.2
+
+    def forward(self):
+        """Defined since this object inherits nn.Module."""
+        raise NotImplementedError
 
     @torch.no_grad()
-    def act(self, robot_state: torch.Tensor, human_states: torch.Tensor):
+    def act(
+        self, robot_state: torch.Tensor, human_states: torch.Tensor
+    ) -> agent_actions.ActionXY:
         """Function called by explorer."""
         human_states = human_states.transpose(0, -1)
         encoded_state = self.gnn(robot_state, human_states)
-        action_mean = self.action_predictor(encoded_state)
+        action_mean = self.action_predictor(encoded_state).softmax(-1)
 
-        cov_mat = torch.diag(self.action_var).to(self.device)
-        dist = distributions.MultivariateNormal(action_mean, cov_mat)
+        dist = distributions.Categorical(action_mean)
         action = dist.sample()
 
-        action_tensor = action.clamp(-self.v_pref, self.v_pref)
-        action = agent_actions.ActionXY(
-            action_tensor[0, 0].item(), action_tensor[0, 1].item()
-        )
-
-        return action_tensor, action, dist.log_prob(action_tensor)
-
-    def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
-        """Function called during training."""
-
-        encoded_state = self.gnn(robot_state, human_states)
-        action_mean = self.action_predictor(encoded_state)
-
-        action_var = self.action_var.expand_as(action_mean)
-        cov_mat = torch.diag_embed(action_var).to(self.device)
-
-        dist = distributions.MultivariateNormal(action_mean, cov_mat)
-        action_logprobs = dist.log_prob(action)
-        dist_entropy = dist.entropy()
-
-        state_value = self.dynamics_reward_network(encoded_state)
-
-        return action_logprobs, state_value.squeeze(-1), dist_entropy
+        return action, self.action_space[action.item()], dist.log_prob(action)
 
     @torch.no_grad()
     def act_static(
@@ -110,13 +94,23 @@ class ContinuousPPO(base_policy.BasePolicy):
         """Function called by explorer."""
         human_states = human_states.transpose(0, -1)
         encoded_state = self.gnn(robot_state, human_states)
-        action = self.action_predictor(encoded_state)
-        action = agent_actions.ActionXY(
-            action[0, 0].item(), action[0, 1].item()
-        )
+        action = self.action_predictor(encoded_state).softmax(-1).max(1)[1]
 
-        return action
+        return self.action_space[action.item()]
+        
+    def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
+        """Function called during training."""
 
+        encoded_state = self.gnn(robot_state, human_states)
+        action_mean = self.action_predictor(encoded_state)
+
+        dist = distributions.Categorical(action_mean)
+        action_logprobs = dist.log_prob(action)
+        dist_entropy = dist.entropy()
+
+        state_value = self.dynamics_reward_network(encoded_state)
+
+        return action_logprobs, state_value.squeeze(-1), dist_entropy
 
     @staticmethod
     def process_history(history):
@@ -147,7 +141,7 @@ class ContinuousPPO(base_policy.BasePolicy):
                 {
                     "robot_states": robot,
                     "human_states": human,
-                    "action": action.squeeze(0),
+                    "action": action,
                     "reward": reward,
                     "undiscounted_reward": torch.Tensor([ureward]),
                     "logprobs": logprob,
@@ -155,6 +149,7 @@ class ContinuousPPO(base_policy.BasePolicy):
             )
 
         return datas
+
 
     def process_batch(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
 
@@ -174,7 +169,6 @@ class ContinuousPPO(base_policy.BasePolicy):
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         # TODO(alex): Maybe need to tweak these weights?
-
         loss = (
             -torch.min(surr1, surr2)
             + 0.5 * nn.functional.mse_loss(state_values, target_reward)
