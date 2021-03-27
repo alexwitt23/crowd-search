@@ -87,6 +87,17 @@ class DiscretePPO(base_policy.BasePolicy):
 
         return action, self.action_space[action.item()], dist.log_prob(action)
 
+    @torch.no_grad()
+    def act_static(
+        self, robot_state: torch.Tensor, human_states: torch.Tensor
+    ) -> agent_actions.ActionXY:
+        """Function called by explorer."""
+        human_states = human_states.transpose(0, -1)
+        encoded_state = self.gnn(robot_state, human_states)
+        action = self.action_predictor(encoded_state).softmax(-1).max(1)[1]
+
+        return self.action_space[action.item()]
+        
     def evaluate(self, robot_state: torch.Tensor, human_states: torch.Tensor, action):
         """Function called during training."""
 

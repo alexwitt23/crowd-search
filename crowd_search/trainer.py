@@ -78,7 +78,7 @@ class Trainer:
             self.is_main = True
         self.rank = rank
         # Create the policy
-        environment = gym.make(
+        self.environment = gym.make(
             "CrowdSim-v1",
             env_cfg=cfg.get("sim-environment"),
             incentive_cfg=cfg.get("incentives"),
@@ -86,7 +86,7 @@ class Trainer:
             human_cfg=cfg.get("human"),
             robot_cfg=cfg.get("robot"),
         )
-        kwargs = {"device": self.device, "action_space": environment.action_space}
+        kwargs = {"device": self.device, "action_space": self.environment.action_space}
 
         if self.is_main:
             print(f">> Using policy: {cfg.get('policy').get('type')}.")
@@ -139,6 +139,7 @@ class Trainer:
                     explorer_info, explorer.Explorer, args=(cfg, self.storage_node)
                 )
             )
+        self.shortest_steps = float("inf")
         self.best_success = 0.0
         self.best_metrics = self.run_dir / "best-metrics.yaml"
         self.global_step = 0
@@ -263,7 +264,7 @@ class Trainer:
         for epoch in range(self.epochs):
             self.epoch = epoch
 
-            while self.storage_node.rpc_sync().get_num_episodes() < 10:
+            while self.storage_node.rpc_sync().get_num_episodes() < 100:
                 time.sleep(5.0)
 
             self._get_history()
@@ -319,6 +320,41 @@ class Trainer:
                 distributed_utils.unwrap_ddp(self.policy).state_dict()
             )
             self._send_policy()
+
+
+            simulation_done = False
+            observation = self.environment.reset()
+
+            # Loop over simulation steps until we are done. The simulation terminates
+            # when the goal is reached or some timeout based on the number of steps.
+            steps = 0
+            histories = []
+            while not simulation_done:
+                robot_state = self.environment.robot.get_full_state()
+                history = {}
+                history["robot_states"] = robot_state
+                history["human_states"] = observation
+                histories.append(history)
+                action = distributed_utils.unwrap_ddp(self.policy).act_static(
+                    robot_state.unsqueeze(-1).to(self.device), observation.unsqueeze(-1).to(self.device)
+                )
+                observation, reward, simulation_done = self.environment.step(action)
+                steps += 1
+            print(f"Completed test environment in {steps} steps.")
+            if steps < 100:
+                viz.plot_history(histories, pathlib.Path(self.run_dir / f"{self.global_step}.gif"))
+
+            if steps < self.shortest_steps:
+                self.shortest_steps = steps
+                print(f">> New Best: Completed test environment in {steps} steps.")
+
+                torch.save(
+                    distributed_utils.unwrap_ddp(self.policy_old).state_dict(),
+                    self.run_dir / "fewest_steps.pt",
+                )
+                self.best_metrics.write_text(yaml.dump({"fewest-steps": steps}))
+
+
 
         if self.is_main:
             print("Training complete.")

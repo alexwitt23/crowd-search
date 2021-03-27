@@ -59,7 +59,7 @@ class CrowdSim(gym.Env):
         # TODO(alex): un hardcode
         self.speed_samples = 5
         # The number of rotation samples to consider.
-        self.rotation_samples = 4
+        self.rotation_samples = 16
         self.start_time = time.perf_counter()
         self.build_action_space(preferred_velocity=1.0)
 
@@ -133,27 +133,26 @@ class CrowdSim(gym.Env):
         # TODO(alex): Do better state checking
 
         pos = [0, 0]
+
+        goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
+        goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
+        
         while True:
             x = random.uniform(-self.world_width, self.world_width)
-            if -0.5 <= x <= 0.5:
+            if goal_x - 0.5 <= x <= goal_x + 0.5:
                 continue
             else:
                 pos[0] = x
                 break
         while True:
             y = random.uniform(-self.world_height, self.world_height)
-            if -0.5 <= y <= 0.5:
+            if goal_y - 0.5 <= y <= goal_y + 0.5:
                 continue
             else:
                 pos[1] = y
                 break
 
-        goal_x = random.uniform(-self.goal_location_width, self.goal_location_width)
-        goal_y = random.uniform(-self.goal_location_height, self.goal_location_height)
-        
         #if time.perf_counter() - self.start_time < 2000:
-        x = 1.0
-        y = 1.0
 
         self.robot.set_state(
             position_x=x,
@@ -218,7 +217,6 @@ class CrowdSim(gym.Env):
         dist_to_goal_now = torch.norm(
             self.robot.get_goal_position() - self.robot.get_position()
         )
-        further_away = dist_to_goal_now - dist_to_goal_fut
 
         if self.global_time >= self.time_limit - 1:
             reward = 0
@@ -238,7 +236,7 @@ class CrowdSim(gym.Env):
         #    )
         #    done = False
         else:
-            reward = 0.0
+            reward = 2.5 * (dist_to_goal_now - dist_to_goal_fut)
             done = False
 
         # update all agents

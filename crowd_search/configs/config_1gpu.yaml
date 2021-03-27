@@ -25,7 +25,7 @@ training:
     type: "Adam"  # CURRENTLY UNUSED
     # This is directly passed in as **kwargs to whatever optimizer is selected.
     kwargs:
-      lr: 0.002
+      lr: 0.0002
       weight_decay: 0.0
       betas: [0.9, 0.999]
 
@@ -42,8 +42,8 @@ sim-environment:
   world-height: 8.0
   # This could be the same as world size above, or if you want to confine the
   # goal location to a smaller region
-  goal-location-width: 0.0
-  goal-location-height: 0.0
+  goal-location-width: 8.0
+  goal-location-height: 8.0
 
 # ORCA related configurations. NOTE, this is named for human planning, but
 # if does take the robot(s) states into consideration.
@@ -82,9 +82,9 @@ human-motion-planner:
 # based on social forces.
 incentives: &incentives_cfg
   # Reaching goal is rewarded
-  success: 230.0
+  success: 20.0
   # Collision is penalized
-  collision: -100
+  collision: -20
   # Keep the robot from coming to close to other agents.
   discomfort-distance: 0.2
   # TODO(alex): What is this?
@@ -109,7 +109,7 @@ robot: &robot_cfg
 
 
 policy:
-  type: "DiscretePPO"
+  type: "ContinuousPPO"
 
   # Define the various models used during training.
   models_cfg:

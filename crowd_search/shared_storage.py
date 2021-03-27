@@ -46,7 +46,7 @@ class SharedStorage:
         datas = self.policy.process_history(history)[: self.max_history_storage]
         self.history.append(datas)
 
-        if history.reward_history[-1] == 230.0:
+        if history.reward_history[-1] == 20.0:
             self.success += 1
         elif history.reward_history[-1] == 0.0:
             self.timeout += 1

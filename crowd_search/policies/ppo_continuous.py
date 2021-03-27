@@ -103,6 +103,21 @@ class ContinuousPPO(base_policy.BasePolicy):
 
         return action_logprobs, state_value.squeeze(-1), dist_entropy
 
+    @torch.no_grad()
+    def act_static(
+        self, robot_state: torch.Tensor, human_states: torch.Tensor
+    ) -> agent_actions.ActionXY:
+        """Function called by explorer."""
+        human_states = human_states.transpose(0, -1)
+        encoded_state = self.gnn(robot_state, human_states)
+        action = self.action_predictor(encoded_state)
+        action = agent_actions.ActionXY(
+            action[0, 0].item(), action[0, 1].item()
+        )
+
+        return action
+
+
     @staticmethod
     def process_history(history):
         history = copy.deepcopy(history)

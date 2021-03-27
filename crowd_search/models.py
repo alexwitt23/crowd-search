@@ -24,7 +24,7 @@ def mlp(channels: list):
     for i in range(1, len(channels)):
         layers.append(nn.Conv1d(channels[i - 1], channels[i], kernel_size=1, bias=True))
         if i < (len(channels) - 1):
-            layers.append(nn.Tanh())
+            layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
 
@@ -122,12 +122,13 @@ class PredictionNetwork(nn.Module):
     def __init__(self, input_state_dim: int, action_space: int) -> None:
         """TODO(alex): docstring"""
         super().__init__()
-        out_size = 2 * input_state_dim
+        out_size = 4 * input_state_dim
         self.action_predictor = mlp(
             [
                 input_state_dim,
                 2 * input_state_dim,
-                out_size,
+                4 * input_state_dim,
+                4 * input_state_dim,
             ]
         )
         self.avg = nn.AdaptiveAvgPool1d(1)
@@ -158,6 +159,8 @@ class DynamicsNetwork(nn.Module):
             [
                 num_channels,
                 2 * num_channels,
+                4 * num_channels,
+                4 * num_channels,
                 full_support_size,
             ]
         )
