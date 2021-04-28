@@ -17,7 +17,6 @@ class ORCA:
         for one time step  In this work, obstacles are not considered. So the value of
         time_horizon_obst doesn't matter."""
         # Parse the environment configuration.
-        self.kinematics = environment_cfg.get("kinematics")
         self.safety_space = environment_cfg.get("safety-space")
         self.neighbor_dist = environment_cfg.get("neighbor-distance")
         self.max_neighbors = environment_cfg.get("max-neighbors")
