@@ -4,5 +4,6 @@ __pycache__
 
 build
 dist
+tags
 
 .py_test*
