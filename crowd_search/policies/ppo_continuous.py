@@ -149,7 +149,9 @@ class ContinuousPPO(base_policy.BasePolicy):
         target_reward = batch["reward"].to(self.device).squeeze(-1)
         logprobs_batch = batch["logprobs"].to(self.device).squeeze(-1)
 
-        logprobs, state_values, dist_entropy = self.evaluate(robot_state_batch, human_state_batch, action_batch)
+        logprobs, state_values, dist_entropy = self.evaluate(
+            robot_state_batch, human_state_batch, action_batch
+        )
 
         # Finding the ratio (pi_theta / pi_theta__old):
         ratios = torch.exp(logprobs - logprobs_batch.detach())

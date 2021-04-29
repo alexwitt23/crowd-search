@@ -37,6 +37,7 @@ from crowd_search.visualization import viz
 
 class Trainer:
     """The trainer class."""
+
     def __init__(
         self,
         cfg: Dict,

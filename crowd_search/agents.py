@@ -143,6 +143,10 @@ class Human(Agent):
             < self.get_radius()
         )
 
+    def set_goal(self, x, y) -> None:
+        self.state_tensor[4] = x
+        self.state_tensor[5] = y
+
 
 class Robot(Agent):
     """This class is very similar to the Human class."""

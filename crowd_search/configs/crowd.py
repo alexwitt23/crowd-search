@@ -11,31 +11,28 @@ few different properties.
 
 """
 
-MIN_NUM_GROUPS = 1
-MAX_NUM_GROUPS = 15
+MIN_NUM_GROUPS = 10
+MAX_NUM_GROUPS = 10
 
-MIN_NUM_PER_GROUP = 1
-MAX_NUM_PER_GROUP = 5
+MIN_NUM_PER_GROUP = 3
+MAX_NUM_PER_GROUP = 10
 
-GROUP_RADIUS = 1.5
+GROUP_RADIUS = 3.0
 
-WORLD_HEIGHT = 20
-WORLD_WIDTH = 20
+WORLD_HEIGHT = 50
+WORLD_WIDTH = 50
 
 
 MOTION_PLANNER_CFG = {
     "human_motion_planner": "ORCA",
     "safety-space": 0.0,
-    "neighbor-distance": 10.0,
-    "max-neighbors": 10,
+    "neighbor-distance": 5.0,
+    "max-neighbors": 100,
     "time-horizon": 5.0,
     "time-horizon-obst": 5.0,
     "radius": 0.5,
     "max-speed": 1.0,
-    "time-step": 0.25
+    "time-step": 0.25,
 }
 
-HUMAN_CFG = {
-    "radius": 0.5,
-    "preferred-velocity": 1.0
-}
+HUMAN_CFG = {"radius": 0.5, "preferred-velocity": 1.0}
