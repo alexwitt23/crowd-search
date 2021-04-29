@@ -4,8 +4,11 @@ position, velocity, etc)."""
 from typing import Any, Dict
 
 import torch
+import random
 
 from third_party.crowd_sim.envs.utils import agent_actions
+world_len = 20
+
 
 
 class Agent:
@@ -130,6 +133,7 @@ class Human(Agent):
         super().__init__()
         self.radius = human_cfg.get("radius")
         self.preferred_velocity = human_cfg.get("preferred-velocity")
+        self.group_id = 0
 
     def get_radius(self) -> float:
         return self.radius
@@ -142,6 +146,10 @@ class Human(Agent):
             torch.norm(self.get_goal_position() - self.get_position())
             < self.get_radius()
         )
+
+    def set_group_id(self, id):
+        self.troup_id=id
+
 
 
 class Robot(Agent):
@@ -185,3 +193,57 @@ class Robot(Agent):
                 self.state_tensor[5],
             ]
         ).unsqueeze(0)
+
+
+class Group:
+    """A state class to house the state of groups """
+    def __init__(self, index_, group_cfg: Dict[str, Any]) -> None:
+        # [start_x, start_y, goal_x, goal_y, direction, radius, v_pref]
+        self.group_id=index_
+        self.num_of_agents=  random.randint(group_cfg.get("min_humans"), group_cfg.get("max_humans")-1)
+        self.radius = group_cfg.get("radius")
+        self.average_velocity = group_cfg.get("avg_velocities")
+        self.average_distances= group_cfg.get("avg_distances")
+        # print("start_xs", group_cfg.get("start_positions_x"))
+        # input("--")
+        if index_<len(group_cfg.get("start_positions_x"))-1:
+            self.start_positions= [group_cfg.get("start_positions_x")[index_], group_cfg.get("start_positions_y")[index_]]
+            self.goal_positions= [group_cfg.get("goal_positions_x")[index_], group_cfg.get("goal_positions_y")[index_]]
+        else:
+            positionx = round(random.uniform(-world_len, world_len), 1)
+            positiony = round(random.uniform(-world_len, world_len), 1)
+            self.start_positions= [positionx, positiony]
+            goalx = round(random.uniform(-world_len, world_len), 1)
+            goaly = round(random.uniform(-world_len, world_len), 1)
+            self.goal_positions= [goalx, goaly]
+
+        self.agents=[]
+
+    def add_agents(self, human: Human) -> None:
+        self.agents.append(human)
+        #genereate agents around start position
+
+
+    def get_full_state(self) -> torch.Tensor:
+        """Get agent's full state. Unsqueeze to add dimension for 'agents'.
+
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3 ]))
+            >>> agent.get_full_state()
+            tensor([[ 0.,  1.,  2.,  3.]])
+        """
+        return self.state_tensor.unsqueeze(0)
+
+    def generate_full_state(self) -> torch.Tensor:
+        """Get agent's full state. Unsqueeze to add dimension for 'agents'.
+
+        Usage:
+            >>> agent = Agent(torch.Tensor([0, 1, 2, 3 ]))
+            >>> agent.get_full_state()
+            tensor([[ 0.,  1.,  2.,  3.]])
+        """
+        return self.state_tensor.unsqueeze(0)
+
+
+
+

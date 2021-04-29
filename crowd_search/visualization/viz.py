@@ -12,6 +12,8 @@ import torch
 
 from crowd_search import agents
 
+ColorSet=['green', 'cyan', 'blue','yellow', 'black' ]
+
 
 def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -38,8 +40,8 @@ def plot_state(idx, robot_state: torch.Tensor, human_states: torch.Tensor):
             markersize=3,
             color="blue",
         )
-    ax.set_ylim(-10, 10)
-    ax.set_xlim(-10, 10)
+    ax.set_ylim(-20, 20)
+    ax.set_xlim(-20, 20)
     fig.canvas.draw()
     image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))

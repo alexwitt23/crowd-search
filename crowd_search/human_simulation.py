@@ -11,22 +11,22 @@ from crowd_search import explorer
 from crowd_search.policies import policy_factory
 from crowd_search.visualization import viz
 
-
 run_dir = pathlib.Path("~/runs/crowd-search/2021-03-26T20.29.20").expanduser()
 save_path = pathlib.Path("gifs/graphic.gif")
 
 cfg = yaml.safe_load((run_dir / "config.yaml").read_text())
 
 environment = gym.make(
-    "CrowdSim-v1",
+    "GroupCrowdSim-v1",
     env_cfg=cfg.get("sim-environment"),
     incentive_cfg=cfg.get("incentives"),
     motion_planner_cfg=cfg.get("human-motion-planner"),
     human_cfg=cfg.get("human"),
+    group_cfg=cfg.get("group"),
     robot_cfg=cfg.get("robot"),
 )
 print("environment", environment )
-input("--")
+# input("--")
 kwargs = {
     "device": torch.device("cpu"),
     "action_space": environment.action_space,
@@ -37,7 +37,6 @@ policy.eval()
 
 simulation_done = False
 observation = environment.reset()
-
 histories = []
 # Loop over simulation steps until we are done. The simulation terminates
 # when the goal is reached or some timeout based on the number of steps.
